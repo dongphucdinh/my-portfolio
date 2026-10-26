@@ -74,3 +74,49 @@ footer .logo{font-size:23px}
 
 .hero{background:radial-gradient(circle at 15% 10%,#efe7ff 0,transparent 38%),radial-gradient(circle at 90% 45%,#e2f7ff 0,transparent 38%)}
 .button{border-radius:999px}.feature,.project-image,.about-photo,.philosophy-image{border-radius:20px;overflow:hidden}.tile{border-radius:16px}.feature{box-shadow:0 10px 35px rgba(82,57,150,.07)}.header{background:rgba(250,249,255,.92)}.nav{font-weight:700}.section-label{color:#7952d8}
+/* Chỉ áp dụng trên điện thoại */
+@media (max-width: 768px) {
+
+    .gallery-strip {
+        width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-behavior: smooth;
+        scroll-snap-type: x mandatory;
+
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .gallery-strip::-webkit-scrollbar {
+        display: none;
+    }
+
+    .gallery-track {
+        display: flex;
+        gap: 15px;
+        width: max-content;
+        padding: 0 calc(50vw - 115px);
+        transform: none !important;
+        animation: none !important;
+    }
+
+    .gallery-track .tile {
+        flex: 0 0 230px;
+        width: 230px;
+        cursor: pointer;
+        scroll-snap-align: center;
+
+        transition: transform 0.3s ease;
+    }
+
+    .gallery-track .tile img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .gallery-track .tile:active {
+        transform: scale(0.97);
+    }
+}
