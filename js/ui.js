@@ -1,7 +1,7 @@
 (function (global) {
     'use strict';
 
-    const { BOARD_TILES, COLOR_GROUPS, formatMoney } = global.CoTyPhu;
+    const { BOARD_TILES, COLOR_GROUPS, Art, formatMoney } = global.CoTyPhu;
 
     function escapeHtml(str) {
         return String(str ?? '')
@@ -23,6 +23,17 @@
         return { col: 11, row: index - 29, side: 'right', corner: false };
     }
 
+    function hexToRgba(hex, alpha) {
+        const clean = String(hex || '#10b981').replace('#', '');
+        const num = parseInt(clean.length === 3
+            ? clean.split('').map(c => c + c).join('')
+            : clean, 16);
+        const r = (num >> 16) & 0xff;
+        const g = (num >> 8) & 0xff;
+        const b = num & 0xff;
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
     class GameUI {
         constructor(sound, handlers) {
             this.sound = sound;
@@ -31,11 +42,24 @@
             this.displayedPositions = {};
             this.lastEventSeq = 0;
             this.hopTimer = null;
-            this.activeModal = null; // null | { type, tileIndex?, minimizedPhase? }
+            this.activeModal = null;
             this.minimizedPhaseKey = null;
+            this.previewTier = null;
             this.tradeDraft = null;
+            this._buildTableProps();
             this._buildBoardSkeleton();
             this._initDicePips();
+        }
+
+        _buildTableProps() {
+            const layer = document.getElementById('table-props-layer');
+            if (!layer || !Art) return;
+            layer.innerHTML = `
+                <div class="table-prop prop-cash">${Art.tablePropSvg('cash')}</div>
+                <div class="table-prop prop-cards">${Art.tablePropSvg('cards')}</div>
+                <div class="table-prop prop-coins-bronze">${Art.tablePropSvg('coins_bronze')}</div>
+                <div class="table-prop prop-coins-gold">${Art.tablePropSvg('coins_gold')}</div>
+            `;
         }
 
         _initDicePips() {
@@ -54,7 +78,7 @@
             for (const tile of BOARD_TILES) {
                 const pos = getTileGridPos(tile.index);
                 const el = document.createElement('div');
-                el.className = `tile ${pos.corner ? 'is-corner' : 'side-' + pos.side}`;
+                el.className = `tile tile-${tile.type} ${pos.corner ? 'is-corner' : 'side-' + pos.side}`;
                 el.dataset.index = String(tile.index);
                 el.style.gridColumn = String(pos.col);
                 el.style.gridRow = String(pos.row);
@@ -62,21 +86,39 @@
                 let colorBarHtml = '';
                 if (tile.type === 'property') {
                     const grp = COLOR_GROUPS[tile.group];
-                    colorBarHtml = `<div class="tile-color-bar" style="background:${grp.color};color:${grp.textColor}"></div>`;
+                    colorBarHtml = `<div class="tile-color-bar" style="background:${grp.color}"></div>`;
                 }
 
-                const iconHtml = tile.icon ? `<div class="tile-icon">${tile.icon}</div>` : '';
+                let centerIconHtml = '';
+                if (tile.type === 'chance' && Art) {
+                    centerIconHtml = Art.chanceWheelSvg();
+                } else if (tile.type === 'chest' && Art) {
+                    centerIconHtml = Art.chestTileSvg();
+                } else if (!pos.corner && tile.icon) {
+                    centerIconHtml = `<div class="tile-icon">${tile.icon}</div>`;
+                }
+
                 const priceHtml = tile.price ? `<div class="tile-price">${formatMoney(tile.price)}</div>` :
                     (tile.amount ? `<div class="tile-price">-${formatMoney(tile.amount)}</div>` : '');
 
+                const cornerArtHtml = pos.corner && Art ? Art.cornerLandmarkSvg(tile.type) : '';
+
                 el.innerHTML = `
-                    ${colorBarHtml}
-                    ${iconHtml}
-                    <div class="tile-name">${escapeHtml(tile.shortName || tile.name)}</div>
-                    ${priceHtml}
-                    <div class="tile-owner-stripe hidden"></div>
-                    <div class="tile-mortgage-tag hidden">THẾ CHẤP</div>
-                    <div class="tile-tokens"></div>
+                    <div class="tile-surface">
+                        ${colorBarHtml}
+                        ${centerIconHtml}
+                        <div class="tile-name">${escapeHtml(tile.shortName || tile.name)}</div>
+                        ${priceHtml}
+                        <div class="tile-owner-stripe hidden"></div>
+                        <div class="tile-mortgage-tag hidden">THẾ CHẤP</div>
+                    </div>
+                    <div class="tile-3d-stage">
+                        <div class="upright-3d">
+                            ${cornerArtHtml}
+                            <div class="tile-building-slot"></div>
+                            <div class="tile-tokens"></div>
+                        </div>
+                    </div>
                 `;
 
                 el.addEventListener('click', () => {
@@ -124,6 +166,7 @@
             }
             this.activeModal = null;
             this.minimizedPhaseKey = null;
+            this.previewTier = null;
             this.tradeDraft = null;
             this.closeModal();
         }
@@ -139,16 +182,15 @@
             this._lastEngine = engine;
             this._lastCtx = ctx;
 
-            const current = engine.getCurrentPlayer();
             const evt = state.lastEvent;
             const isNewEvent = evt && evt.seq > this.lastEventSeq;
 
             if (isNewEvent) {
                 this.lastEventSeq = evt.seq;
+                this.previewTier = null;
                 this._handleEventFX(evt, ctx);
             }
 
-            // Animate hops if player moved forward
             const shouldHop = isNewEvent && evt && evt.playerId &&
                 typeof evt.fromPos === 'number' && typeof evt.toPos === 'number' &&
                 evt.fromPos !== evt.toPos && evt.type !== 'go_to_jail';
@@ -246,36 +288,43 @@
                 el.classList.toggle('active-landed', tile.index === activePos);
 
                 const prop = state.properties[tile.index];
+                const surface = el.querySelector('.tile-surface');
                 const stripe = el.querySelector('.tile-owner-stripe');
                 const mortTag = el.querySelector('.tile-mortgage-tag');
-                const colorBar = el.querySelector('.tile-color-bar');
+                const bldgSlot = el.querySelector('.tile-building-slot');
 
                 if (prop) {
                     el.classList.toggle('mortgaged', Boolean(prop.mortgaged));
                     if (mortTag) mortTag.classList.toggle('hidden', !prop.mortgaged);
+                    const owner = prop.ownerId ? engine.getPlayer(prop.ownerId) : null;
+                    if (surface) {
+                        surface.style.background = owner && !prop.mortgaged
+                            ? hexToRgba(owner.color, 0.14)
+                            : '';
+                    }
                     if (stripe) {
-                        if (prop.ownerId) {
-                            const owner = engine.getPlayer(prop.ownerId);
+                        if (owner) {
                             stripe.classList.remove('hidden');
-                            stripe.style.background = owner ? owner.color : '#fff';
+                            stripe.style.background = owner.color;
                         } else {
                             stripe.classList.add('hidden');
                         }
                     }
-                    if (colorBar) {
-                        if (prop.houses === 5) colorBar.textContent = '🏨';
-                        else if (prop.houses > 0) colorBar.textContent = '🏠'.repeat(prop.houses);
-                        else colorBar.textContent = '';
+                    if (bldgSlot) {
+                        if (owner && !prop.mortgaged && Art) {
+                            bldgSlot.innerHTML = Art.miniBoardBuildingSvg(prop.houses || 0, owner.color);
+                        } else {
+                            bldgSlot.innerHTML = '';
+                        }
                     }
                 }
 
-                // Tokens on this tile
                 const tokensEl = el.querySelector('.tile-tokens');
                 if (tokensEl) {
                     const here = state.players.filter(p => !p.bankrupt && this.displayedPositions[p.id] === tile.index);
                     tokensEl.innerHTML = here.map(p => {
                         const isActive = current && current.id === p.id;
-                        return `<span class="token-pin ${isActive ? 'is-active' : ''} ${p.inJail ? 'in-jail' : ''}" style="background:${p.color}" title="${escapeHtml(p.name)}">${p.avatar}</span>`;
+                        return `<span class="token-standee ${isActive ? 'is-active' : ''} ${p.inJail ? 'in-jail' : ''}" style="background:${p.color}" title="${escapeHtml(p.name)}">${p.avatar}</span>`;
                     }).join('');
                 }
             }
@@ -290,7 +339,7 @@
                 turnBadge.textContent = `Lượt #${state.turnNumber} • ${current.avatar} ${current.name}`;
             }
 
-            const potPill = document.getElementById('pot-pill') || document.getElementById('free-parking-pill');
+            const potPill = document.getElementById('free-parking-pill');
             const potAmt = document.getElementById('pot-amount');
             if (potPill && potAmt) {
                 const showPot = state.config.freeParkingJackpot || state.freeParkingPot > 0;
@@ -300,8 +349,10 @@
 
             const d1 = document.getElementById('dice-1');
             const d2 = document.getElementById('dice-2');
+            const totalBadge = document.getElementById('dice-total-badge');
             if (d1) d1.dataset.val = String(state.dice[0]);
             if (d2) d2.dataset.val = String(state.dice[1]);
+            if (totalBadge) totalBadge.textContent = String(state.dice[0] + state.dice[1]);
 
             const ticker = document.getElementById('event-ticker');
             if (ticker) {
@@ -320,13 +371,13 @@
                 } else if (current.inJail) {
                     const bail = state.config.jailBail;
                     actionsEl.innerHTML = `
-                        <button type="button" class="btn btn-primary" data-act="ROLL_DICE">🎲 Tung đôi ra tù (${current.jailTurns}/3)</button>
+                        <button type="button" class="btn btn-arcade-blue" data-act="ROLL_DICE">🎲 Tung đôi ra tù (${current.jailTurns}/3)</button>
                         <button type="button" class="btn btn-accent btn-sm" data-act="PAY_JAIL_BAIL" ${current.cash < bail ? 'disabled' : ''}>💵 Nộp ${formatMoney(bail)}</button>
-                        ${current.jailCards > 0 ? '<button type="button" class="btn btn-secondary btn-sm" data-act="USE_JAIL_CARD">🎟️ Dùng thẻ Miễn Tù</button>' : ''}
+                        ${current.jailCards > 0 ? '<button type="button" class="btn btn-primary btn-sm" data-act="USE_JAIL_CARD">🎟️ Dùng thẻ Miễn Tù</button>' : ''}
                     `;
                 } else {
-                    const label = state.canRollAgain ? '🎲 Tung tiếp (Được đôi!)' : '🎲 Tung Xúc Xắc';
-                    actionsEl.innerHTML = `<button type="button" id="btn-roll" class="btn btn-primary btn-lg" data-act="ROLL_DICE">${label}</button>`;
+                    const label = state.canRollAgain ? '🎲 Tung tiếp (Được đôi!)' : '🎲 TUNG XÚC XẮC';
+                    actionsEl.innerHTML = `<button type="button" id="btn-roll" class="btn btn-arcade-blue btn-lg" data-act="ROLL_DICE">${label}</button>`;
                 }
             } else if (state.phase === 'END_TURN') {
                 if (canAct) {
@@ -335,9 +386,9 @@
                     actionsEl.innerHTML = `<span class="waiting-pill">⏳ ${escapeHtml(current.name)} đang hoàn tất lượt...</span>`;
                 }
             } else if (isPhaseModalMinimized && ['BUY_DECISION', 'AUCTION', 'CARD_MODAL', 'DEBT_RESOLUTION', 'TRADE_OFFER'].includes(state.phase)) {
-                actionsEl.innerHTML = `<button type="button" id="btn-reopen-phase" class="btn btn-primary">📋 Mở lại bảng lựa chọn</button>`;
+                actionsEl.innerHTML = `<button type="button" id="btn-reopen-phase" class="btn btn-arcade-blue">📋 Mở lại bảng lựa chọn</button>`;
             } else {
-                actionsEl.innerHTML = `<span class="waiting-pill">📌 Đang xử lý: ${this._phaseLabel(state.phase)}</span>`;
+                actionsEl.innerHTML = `<span class="waiting-pill">📌 ${this._phaseLabel(state.phase)}</span>`;
             }
 
             actionsEl.querySelectorAll('[data-act]').forEach(btn => {
@@ -368,53 +419,60 @@
         }
 
         _renderPlayers(engine, ctx) {
-            const list = document.getElementById('players-list');
-            if (!list) return;
             const state = engine.getState();
             const current = engine.getCurrentPlayer();
 
-            list.innerHTML = state.players.map(p => {
+            for (let i = 0; i < 4; i++) {
+                const container = document.getElementById(`corner-hud-${i}`);
+                if (!container) continue;
+                const p = state.players[i];
+                if (!p) {
+                    container.classList.add('hidden');
+                    container.innerHTML = '';
+                    continue;
+                }
+
+                container.classList.remove('hidden');
                 const isActive = current && current.id === p.id && !p.bankrupt;
+                container.classList.toggle('active', Boolean(isActive));
+                container.classList.toggle('bankrupt', Boolean(p.bankrupt));
+
                 const isLocal = ctx.mode !== 'local' && ctx.localPlayerId === p.id;
                 const owned = engine.getOwnedTileIndices(p.id);
                 const worth = engine.getNetWorth(p.id);
 
-                const badges = [];
-                if (isLocal) badges.push('<span class="badge badge-you">Bạn</span>');
-                if (p.isBot) badges.push('<span class="badge badge-bot">Bot AI</span>');
-                if (!p.connected) badges.push('<span class="badge badge-jail">Mất kết nối</span>');
-                if (p.inJail) badges.push('<span class="badge badge-jail">Trong tù</span>');
-                if (p.jailCards > 0) badges.push(`<span class="badge">🎟️×${p.jailCards}</span>`);
-                if (p.bankrupt) badges.push('<span class="badge badge-jail">Phá sản</span>');
+                const tags = [];
+                if (isLocal) tags.push('BẠN');
+                else if (p.isBot) tags.push('BOT');
+                if (p.inJail) tags.push('TÙ');
+                if (p.bankrupt) tags.push('PHÁ SẢN');
 
-                const swatches = owned.map(idx => {
-                    const tile = BOARD_TILES[idx];
-                    const prop = state.properties[idx];
-                    const col = tile.group ? COLOR_GROUPS[tile.group].color : (tile.type === 'station' ? '#334155' : '#0284c7');
-                    return `<span class="swatch-dot ${prop.mortgaged ? 'mort' : ''}" style="background:${col}" title="${escapeHtml(tile.name)}"></span>`;
-                }).join('');
-
-                return `
-                    <div class="player-hud ${isActive ? 'active' : ''} ${p.bankrupt ? 'bankrupt' : ''}">
-                        <div class="hud-row">
-                            <div class="hud-identity">
-                                <div class="hud-avatar" style="background:${p.color}">${p.avatar}</div>
-                                <div class="hud-name-wrap">
-                                    <div class="hud-name">${escapeHtml(p.name)}</div>
-                                    <div class="hud-badges">${badges.join('')}</div>
+                container.innerHTML = `
+                    <div class="hud-card-box">
+                        <div class="hud-avatar-frame" style="background:${p.color}">
+                            <span>${p.avatar}</span>
+                            ${isActive ? '<span class="hud-crown-tag">LƯỢT</span>' : ''}
+                        </div>
+                        <div class="hud-info-col">
+                            <div class="hud-ribbon-name" style="background:${p.color}">
+                                <span>${escapeHtml(p.name)}</span>
+                                ${tags.length ? `<span class="badge" style="background:rgba(0,0,0,0.22);color:#fff">${tags[0]}</span>` : ''}
+                            </div>
+                            <div class="hud-cash-row">
+                                <div class="hud-cash-val">
+                                    <span>${formatMoney(p.cash)}</span>
+                                    ${Art ? Art.banknoteSvg(19) : ''}
                                 </div>
                             </div>
-                            <div class="hud-money">
-                                <div class="hud-cash">${formatMoney(p.cash)}</div>
-                                <div class="hud-worth">TS: ${formatMoney(worth)}</div>
+                            <div class="hud-sub-meta">
+                                <span>TS: ${formatMoney(worth)}</span>
+                                <span>📍 ${owned.length} đất${p.jailCards > 0 ? ` • 🎟️${p.jailCards}` : ''}</span>
                             </div>
                         </div>
-                        ${swatches ? `<div class="hud-swatches">${swatches}</div>` : ''}
                     </div>
                 `;
-            }).join('');
+            }
 
-            // Enable/disable Manage and Trade shortcuts
             const manageBtn = document.getElementById('btn-open-manage');
             const tradeBtn = document.getElementById('btn-open-trade');
             const canManage = current && ctx.canAct(current.id) &&
@@ -454,7 +512,7 @@
             if (!box) return;
             const row = document.createElement('div');
             row.className = 'chat-msg';
-            row.innerHTML = `<strong style="color:${escapeHtml(msg.senderColor || '#34d399')}">${escapeHtml(msg.senderAvatar || '')} ${escapeHtml(msg.senderName)}:</strong> ${escapeHtml(msg.text)}`;
+            row.innerHTML = `<strong style="color:${escapeHtml(msg.senderColor || '#fde047')}">${escapeHtml(msg.senderAvatar || '')} ${escapeHtml(msg.senderName)}:</strong> ${escapeHtml(msg.text)}`;
             box.appendChild(row);
             box.scrollTop = box.scrollHeight;
         }
@@ -514,11 +572,22 @@
             }
         }
 
-        _openModalHtml(html, wide = false) {
+        _openBizCardModal(title, ribbonColor, bodyHtml, closeHandler, wide = false) {
             const root = document.getElementById('modal-root');
             if (!root) return;
-            root.innerHTML = `<div class="modal-card ${wide ? 'wide' : ''}">${html}</div>`;
+            root.innerHTML = `
+                <div class="modal-card biz-card ${wide ? 'wide' : ''}">
+                    <div class="biz-ribbon" style="background:${ribbonColor}">
+                        <span>${escapeHtml(title)}</span>
+                        ${closeHandler ? '<button type="button" class="biz-close-x" id="modal-close-btn" aria-label="Đóng">✕</button>' : ''}
+                    </div>
+                    ${bodyHtml}
+                </div>
+            `;
             root.classList.remove('hidden');
+            if (closeHandler) {
+                document.getElementById('modal-close-btn')?.addEventListener('click', closeHandler);
+            }
         }
 
         closeModal() {
@@ -535,22 +604,44 @@
             this._renderCenter(this._lastEngine, this._lastCtx);
         }
 
-        _buildDeedTableHtml(tile) {
-            if (tile.type === 'property') {
-                return `
-                    <table class="deed-table">
-                        <tr><td>Giá mua đất</td><td>${formatMoney(tile.price)}</td></tr>
-                        <tr><td>Tiền thuê cơ bản (×2 nếu đủ bộ màu)</td><td>${formatMoney(tile.rent[0])}</td></tr>
-                        <tr><td>Có 1 Nhà 🏠</td><td>${formatMoney(tile.rent[1])}</td></tr>
-                        <tr><td>Có 2 Nhà 🏠🏠</td><td>${formatMoney(tile.rent[2])}</td></tr>
-                        <tr><td>Có 3 Nhà 🏠🏠🏠</td><td>${formatMoney(tile.rent[3])}</td></tr>
-                        <tr><td>Có 4 Nhà 🏠🏠🏠🏠</td><td>${formatMoney(tile.rent[4])}</td></tr>
-                        <tr><td>Có Khách Sạn 🏨</td><td>${formatMoney(tile.rent[5])}</td></tr>
-                        <tr><td>Chi phí xây 1 Nhà / Khách sạn</td><td>${formatMoney(tile.houseCost)}</td></tr>
-                        <tr><td>Giá trị thế chấp</td><td>${formatMoney(Math.floor(tile.price / 2))}</td></tr>
-                    </table>
-                `;
-            }
+        _getRibbonColor(tile) {
+            if (tile.type === 'property') return COLOR_GROUPS[tile.group].color;
+            if (tile.type === 'station') return '#1e293b';
+            if (tile.type === 'utility') return '#0284c7';
+            return '#16a34a';
+        }
+
+        _buildPropertyTierGridHtml(tile, selectedTier, builtHouses = 0, showAllChecked = false) {
+            const accent = COLOR_GROUPS[tile.group].color;
+            const tiers = [
+                { lvl: 0, label: 'Đất' },
+                { lvl: 1, label: 'Nhà 1' },
+                { lvl: 2, label: 'Nhà 2' },
+                { lvl: 3, label: 'Nhà 3' }
+            ];
+            return `
+                <div class="tier-cards-grid">
+                    ${tiers.map(t => {
+                        const isChecked = showAllChecked || builtHouses >= t.lvl;
+                        return `
+                            <div class="tier-card ${selectedTier === t.lvl ? 'selected' : ''}" data-tier="${t.lvl}">
+                                ${Art ? Art.buildingCardSvg(t.lvl, accent) : ''}
+                                <div class="tier-label-row">
+                                    <span>${t.label}</span>
+                                    <span class="tier-check ${isChecked ? 'checked' : ''}">${isChecked ? '✓' : ''}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                <div style="display:flex;justify-content:center;gap:6px;margin-bottom:6px">
+                    <button type="button" class="btn btn-xs ${selectedTier === 4 ? 'btn-arcade-blue' : 'btn-secondary'}" data-tier="4">🏠×4 (${formatMoney(tile.rent[4])})</button>
+                    <button type="button" class="btn btn-xs ${selectedTier === 5 ? 'btn-arcade-blue' : 'btn-accent'}" data-tier="5">🏨 Khách sạn (${formatMoney(tile.rent[5])})</button>
+                </div>
+            `;
+        }
+
+        _buildSpecialDeedTableHtml(tile) {
             if (tile.type === 'station') {
                 return `
                     <table class="deed-table">
@@ -573,21 +664,12 @@
                     </table>
                 `;
             }
-            return `<p class="muted-text">${escapeHtml(tile.description || tile.name)}</p>`;
-        }
-
-        _getDeedHeaderStyle(tile) {
-            if (tile.type === 'property') {
-                const grp = COLOR_GROUPS[tile.group];
-                return `background:${grp.color};color:${grp.textColor}`;
-            }
-            if (tile.type === 'station') return 'background:#1e293b;color:#f8fafc';
-            if (tile.type === 'utility') return 'background:#0369a1;color:#f0f9ff';
-            return 'background:#065f46;color:#ecfdf5';
+            return `<p style="text-align:center;margin:10px 0">${escapeHtml(tile.description || tile.name)}</p>`;
         }
 
         openDeedModal(tileIndex) {
             if (!this._lastEngine) return;
+            this.previewTier = null;
             this.activeModal = { type: 'deed', tileIndex };
             this._renderDeedModal(this._lastEngine, this._lastCtx, tileIndex);
         }
@@ -601,22 +683,41 @@
             const canManage = owner && current && owner.id === current.id && ctx.canAct(owner.id) &&
                 (state.phase === 'ROLL' || state.phase === 'END_TURN' || state.phase === 'DEBT_RESOLUTION');
 
-            let ownerStatus = '';
+            let body = '';
             if (prop) {
-                ownerStatus = owner
-                    ? `<p style="margin-bottom:10px">Chủ sở hữu: <strong style="color:${owner.color}">${owner.avatar} ${escapeHtml(owner.name)}</strong> ${prop.mortgaged ? '(Đang thế chấp)' : ''}</p>`
-                    : `<p style="margin-bottom:10px" class="muted-text">Trạng thái: Chưa có chủ sở hữu</p>`;
+                body += owner
+                    ? `<p style="text-align:center;margin-bottom:10px;font-weight:700">Chủ sở hữu: <span style="color:${owner.color}">${owner.avatar} ${escapeHtml(owner.name)}</span> ${prop.mortgaged ? '(Đang thế chấp)' : ''}</p>`
+                    : `<p style="text-align:center;margin-bottom:10px" class="muted-text">Chưa có chủ sở hữu • Giá đất: <strong>${formatMoney(tile.price)}</strong></p>`;
             }
 
-            let quickBtns = '';
+            if (tile.type === 'property') {
+                const tier = this.previewTier !== null ? this.previewTier : (prop?.houses || 0);
+                const rentVal = tier === 0 && owner && engine.ownsColorGroup(owner.id, tile.group)
+                    ? tile.rent[0] * 2
+                    : tile.rent[tier];
+                body += this._buildPropertyTierGridHtml(tile, tier, prop?.houses || 0, !owner);
+                body += `
+                    <div class="rent-preview-line">
+                        <span>Tiền thuê${tier === 0 ? ' (độc quyền ×2)' : ''}:</span>
+                        <strong>${formatMoney(rentVal)}</strong>
+                        ${Art ? Art.banknoteSvg(20) : ''}
+                    </div>
+                    <div class="biz-subline">
+                        <span>Giá xây 1 nhà: <strong>${formatMoney(tile.houseCost)}</strong> • Thế chấp: <strong>${formatMoney(Math.floor(tile.price / 2))}</strong></span>
+                    </div>
+                `;
+            } else {
+                body += this._buildSpecialDeedTableHtml(tile);
+            }
+
             if (canManage) {
                 const buildOk = engine.canBuildOn(owner.id, tileIndex);
                 const sellOk = engine.canSellOn(owner.id, tileIndex);
                 const mortOk = engine.canMortgage(owner.id, tileIndex);
                 const unmortOk = engine.canUnmortgage(owner.id, tileIndex);
-                quickBtns = `
-                    <div class="modal-actions" style="justify-content:flex-start;margin-bottom:8px">
-                        ${tile.type === 'property' ? `<button type="button" class="btn btn-primary btn-sm" data-mact="BUILD_HOUSE" ${buildOk ? '' : 'disabled'}>🏠 Xây nhà (-${formatMoney(tile.houseCost)})</button>` : ''}
+                body += `
+                    <div class="modal-actions">
+                        ${tile.type === 'property' ? `<button type="button" class="btn btn-arcade-blue btn-sm" data-mact="BUILD_HOUSE" ${buildOk ? '' : 'disabled'}>🏠 Xây nhà (-${formatMoney(tile.houseCost)})</button>` : ''}
                         ${tile.type === 'property' && prop.houses > 0 ? `<button type="button" class="btn btn-secondary btn-sm" data-mact="SELL_HOUSE" ${sellOk ? '' : 'disabled'}>Bán nhà (+${formatMoney(Math.floor(tile.houseCost / 2))})</button>` : ''}
                         ${!prop.mortgaged ? `<button type="button" class="btn btn-accent btn-sm" data-mact="MORTGAGE" ${mortOk ? '' : 'disabled'}>Thế chấp (+${formatMoney(Math.floor(tile.price / 2))})</button>` : ''}
                         ${prop.mortgaged ? `<button type="button" class="btn btn-primary btn-sm" data-mact="UNMORTGAGE" ${unmortOk ? '' : 'disabled'}>Chuộc lại (-${formatMoney(engine.getUnmortgageCost(tileIndex))})</button>` : ''}
@@ -624,20 +725,14 @@
                 `;
             }
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>📜 Thông tin ô bàn cờ (#${tile.index})</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-close-btn">✕ Đóng</button>
-                </div>
-                <div class="deed-banner" style="${this._getDeedHeaderStyle(tile)}">
-                    <h4>${tile.icon ? tile.icon + ' ' : ''}${escapeHtml(tile.name)}</h4>
-                </div>
-                ${ownerStatus}
-                ${this._buildDeedTableHtml(tile)}
-                ${quickBtns}
-            `);
+            this._openBizCardModal(tile.name, this._getRibbonColor(tile), body, () => this.closeModal());
 
-            document.getElementById('modal-close-btn')?.addEventListener('click', () => this.closeModal());
+            document.querySelectorAll('[data-tier]').forEach(card => {
+                card.addEventListener('click', () => {
+                    this.previewTier = Number(card.dataset.tier);
+                    this._renderDeedModal(engine, ctx, tileIndex);
+                });
+            });
             document.querySelectorAll('[data-mact]').forEach(btn => {
                 btn.addEventListener('click', () => {
                     this.handlers.onAction({ type: btn.dataset.mact, tileIndex });
@@ -653,25 +748,48 @@
             const canAct = ctx.canAct(current.id);
             const canAfford = current.cash >= tile.price;
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🏷️ Cơ hội mua bất động sản</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-minimize-btn">👀 Xem bàn cờ</button>
-                </div>
-                <div class="deed-banner" style="${this._getDeedHeaderStyle(tile)}">
-                    <h4>${tile.icon ? tile.icon + ' ' : ''}${escapeHtml(tile.name)}</h4>
-                </div>
-                ${this._buildDeedTableHtml(tile)}
-                <p><strong>${escapeHtml(current.name)}</strong> đang có <strong>${formatMoney(current.cash)}</strong>.</p>
+            let body = '';
+            if (tile.type === 'property') {
+                const tier = this.previewTier !== null ? this.previewTier : 0;
+                body += this._buildPropertyTierGridHtml(tile, tier, 0, true);
+                body += `
+                    <div class="rent-preview-line">
+                        <span>Tiền thuê:</span>
+                        <strong>${formatMoney(tile.rent[tier])}</strong>
+                        ${Art ? Art.banknoteSvg(20) : ''}
+                    </div>
+                `;
+            } else {
+                body += this._buildSpecialDeedTableHtml(tile);
+            }
+
+            body += `
                 <div class="modal-actions">
                     ${canAct ? `
-                        <button type="button" class="btn btn-secondary" data-act="START_AUCTION">🔨 Đưa ra Đấu Giá</button>
-                        <button type="button" class="btn btn-primary" data-act="BUY_PROPERTY" ${canAfford ? '' : 'disabled'}>✅ Mua ngay (${formatMoney(tile.price)})</button>
+                        <button type="button" class="btn btn-arcade-blue btn-lg btn-block" data-act="BUY_PROPERTY" ${canAfford ? '' : 'disabled'}>
+                            MUA VỚI GIÁ ${formatMoney(tile.price)} ${Art ? Art.banknoteSvg(20) : ''}
+                        </button>
+                        <button type="button" class="btn btn-accent btn-sm" data-act="START_AUCTION">🔨 Đưa ra Đấu Giá</button>
                     ` : `<span class="waiting-pill">⏳ Đang chờ ${escapeHtml(current.name)} quyết định...</span>`}
                 </div>
-            `);
+                <div class="biz-subline">
+                    <span>Thế chấp: <strong>${formatMoney(Math.floor(tile.price / 2))}</strong> ${Art ? Art.banknoteSvg(15) : ''} • Tiền hiện có: <strong>${formatMoney(current.cash)}</strong></span>
+                </div>
+            `;
 
-            document.getElementById('modal-minimize-btn')?.addEventListener('click', () => this._minimizePhaseModal(state));
+            this._openBizCardModal(
+                tile.name,
+                this._getRibbonColor(tile),
+                body,
+                () => this._minimizePhaseModal(state)
+            );
+
+            document.querySelectorAll('[data-tier]').forEach(card => {
+                card.addEventListener('click', () => {
+                    this.previewTier = Number(card.dataset.tier);
+                    this._renderBuyModal(engine, ctx);
+                });
+            });
             document.querySelectorAll('[data-act]').forEach(btn => {
                 btn.addEventListener('click', () => this.handlers.onAction({ type: btn.dataset.act }));
             });
@@ -686,34 +804,27 @@
             const activeBidder = engine.getPlayer(activeId);
             const highestBidder = auc.highestBidderId ? engine.getPlayer(auc.highestBidderId) : null;
             const canAct = activeBidder && ctx.canAct(activeBidder.id);
-
             const minBid = auc.highestBid === 0 ? 10 : auc.highestBid + 10;
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🔨 Đấu giá công khai</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-minimize-btn">👀 Xem bàn cờ</button>
+            const body = `
+                <div style="background:#ffffff;border:2px solid #e2e8f0;padding:12px;border-radius:14px;margin-bottom:12px;text-align:center">
+                    <div class="muted-text">Giá cao nhất hiện tại (Gốc: ${formatMoney(tile.price)})</div>
+                    <div style="font-size:30px;font-weight:900;color:#d97706;margin:4px 0">${formatMoney(auc.highestBid)} ${Art ? Art.banknoteSvg(22) : ''}</div>
+                    <div>${highestBidder ? `Người giữ giá: <strong style="color:${highestBidder.color}">${highestBidder.avatar} ${escapeHtml(highestBidder.name)}</strong>` : 'Chưa có ai trả giá'}</div>
                 </div>
-                <div class="deed-banner" style="${this._getDeedHeaderStyle(tile)}">
-                    <h4>${escapeHtml(tile.name)} (Giá gốc: ${formatMoney(tile.price)})</h4>
-                </div>
-                <div style="background:rgba(0,0,0,0.28);padding:12px;border-radius:12px;margin-bottom:12px;text-align:center">
-                    <div class="muted-text">Giá cao nhất hiện tại</div>
-                    <div style="font-size:28px;font-weight:800;color:#fbbf24">${formatMoney(auc.highestBid)}</div>
-                    <div>${highestBidder ? `Người giữ giá: <strong>${highestBidder.avatar} ${escapeHtml(highestBidder.name)}</strong>` : 'Chưa có ai trả giá'}</div>
-                </div>
-                <p style="margin-bottom:10px">Lượt trả giá: <strong style="color:${activeBidder?.color || '#fff'}">${activeBidder?.avatar} ${escapeHtml(activeBidder?.name || '')}</strong> (Tiền mặt: ${formatMoney(activeBidder?.cash || 0)})</p>
+                <p style="text-align:center;margin-bottom:10px">Lượt trả giá: <strong style="color:${activeBidder?.color || '#0f172a'}">${activeBidder?.avatar} ${escapeHtml(activeBidder?.name || '')}</strong> (Tiền mặt: ${formatMoney(activeBidder?.cash || 0)})</p>
                 <div class="modal-actions">
                     ${canAct ? `
                         <button type="button" class="btn btn-danger btn-sm" data-auc="pass">Bỏ qua</button>
-                        <button type="button" class="btn btn-primary btn-sm" data-auc="${minBid}" ${activeBidder.cash < minBid ? 'disabled' : ''}>Trả ${formatMoney(minBid)}</button>
+                        <button type="button" class="btn btn-arcade-blue btn-sm" data-auc="${minBid}" ${activeBidder.cash < minBid ? 'disabled' : ''}>Trả ${formatMoney(minBid)}</button>
                         <button type="button" class="btn btn-primary btn-sm" data-auc="${auc.highestBid + 50}" ${activeBidder.cash < auc.highestBid + 50 ? 'disabled' : ''}>+${formatMoney(50)} (${formatMoney(auc.highestBid + 50)})</button>
                         <button type="button" class="btn btn-accent btn-sm" data-auc="${auc.highestBid + 100}" ${activeBidder.cash < auc.highestBid + 100 ? 'disabled' : ''}>+${formatMoney(100)} (${formatMoney(auc.highestBid + 100)})</button>
                     ` : `<span class="waiting-pill">⏳ Đang chờ ${escapeHtml(activeBidder?.name || '')} trả giá...</span>`}
                 </div>
-            `);
+            `;
 
-            document.getElementById('modal-minimize-btn')?.addEventListener('click', () => this._minimizePhaseModal(state));
+            this._openBizCardModal(`ĐẤU GIÁ: ${tile.name}`, this._getRibbonColor(tile), body, () => this._minimizePhaseModal(state));
+
             document.querySelectorAll('[data-auc]').forEach(btn => {
                 btn.addEventListener('click', () => {
                     if (btn.dataset.auc === 'pass') this.handlers.onAction({ type: 'AUCTION_PASS' });
@@ -730,10 +841,7 @@
             const canAct = ctx.canAct(current.id);
             const isChance = pending.deck === 'chance';
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>${isChance ? '❓ Thẻ Cơ Hội' : '🎁 Thẻ Khí Vận'}</h3>
-                </div>
+            const body = `
                 <div class="card-draw-box ${isChance ? 'chance' : 'chest'}">
                     <div class="card-emoji">${isChance ? '❓' : '🎁'}</div>
                     <h4>${escapeHtml(pending.card.title)}</h4>
@@ -741,10 +849,17 @@
                 </div>
                 <div class="modal-actions">
                     ${canAct
-                        ? `<button type="button" class="btn btn-primary btn-block" id="btn-confirm-card">Xác nhận &amp; Thực hiện</button>`
+                        ? `<button type="button" class="btn btn-arcade-blue btn-lg btn-block" id="btn-confirm-card">Xác nhận &amp; Thực hiện</button>`
                         : `<span class="waiting-pill">⏳ Đang chờ ${escapeHtml(current.name)} xác nhận...</span>`}
                 </div>
-            `);
+            `;
+
+            this._openBizCardModal(
+                isChance ? 'THẺ CƠ HỘI' : 'THẺ KHÍ VẬN',
+                isChance ? '#f97316' : '#0284c7',
+                body,
+                null
+            );
 
             document.getElementById('btn-confirm-card')?.addEventListener('click', () => {
                 this.handlers.onAction({ type: 'CONFIRM_CARD' });
@@ -759,23 +874,20 @@
             const canAct = debtor && ctx.canAct(debtor.id);
             const shortage = Math.max(0, debt.amount - debtor.cash);
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>⚠️ Thanh toán khoản nợ</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-minimize-btn">👀 Xem bàn cờ</button>
-                </div>
-                <p style="margin-bottom:8px"><strong>${escapeHtml(debtor.name)}</strong> cần thanh toán <strong>${formatMoney(debt.amount)}</strong> (${escapeHtml(debt.reason)}).</p>
-                <p style="margin-bottom:14px">Tiền mặt hiện có: <strong>${formatMoney(debtor.cash)}</strong> • Còn thiếu: <strong style="color:#f87171">${formatMoney(shortage)}</strong></p>
+            const body = `
+                <p style="margin-bottom:8px;text-align:center"><strong>${escapeHtml(debtor.name)}</strong> cần thanh toán <strong>${formatMoney(debt.amount)}</strong> (${escapeHtml(debt.reason)}).</p>
+                <p style="margin-bottom:14px;text-align:center">Tiền mặt hiện có: <strong>${formatMoney(debtor.cash)}</strong> • Còn thiếu: <strong style="color:#dc2626">${formatMoney(shortage)}</strong></p>
                 <div class="modal-actions">
                     ${canAct ? `
-                        <button type="button" class="btn btn-secondary" id="btn-debt-manage">🏘️ Bán nhà / Thế chấp đất</button>
+                        <button type="button" class="btn btn-arcade-blue" id="btn-debt-manage">🏘️ Bán nhà / Thế chấp đất</button>
                         ${shortage === 0 ? `<button type="button" class="btn btn-primary" id="btn-debt-pay">✅ Trả nợ ngay</button>` : ''}
                         <button type="button" class="btn btn-danger" id="btn-debt-bankrupt">🏳️ Tuyên bố Phá Sản</button>
                     ` : `<span class="waiting-pill">⏳ Đang chờ ${escapeHtml(debtor.name)} xoay tiền...</span>`}
                 </div>
-            `);
+            `;
 
-            document.getElementById('modal-minimize-btn')?.addEventListener('click', () => this._minimizePhaseModal(state));
+            this._openBizCardModal('THANH TOÁN KHOẢN NỢ', '#e11d48', body, () => this._minimizePhaseModal(state));
+
             document.getElementById('btn-debt-manage')?.addEventListener('click', () => this.openManageModal());
             document.getElementById('btn-debt-pay')?.addEventListener('click', () => this.handlers.onAction({ type: 'RESOLVE_DEBT' }));
             document.getElementById('btn-debt-bankrupt')?.addEventListener('click', () => this.handlers.onAction({ type: 'DECLARE_BANKRUPTCY' }));
@@ -812,7 +924,7 @@
                             ${prop.mortgaged ? '<span class="badge badge-jail">Thế chấp</span>' : ''}
                         </div>
                         <div class="manage-btns">
-                            ${tile.type === 'property' ? `<button type="button" class="btn btn-primary btn-xs" data-mg="BUILD_HOUSE" data-idx="${idx}" ${canB ? '' : 'disabled'}>+Nhà (${formatMoney(tile.houseCost)})</button>` : ''}
+                            ${tile.type === 'property' ? `<button type="button" class="btn btn-arcade-blue btn-xs" data-mg="BUILD_HOUSE" data-idx="${idx}" ${canB ? '' : 'disabled'}>+Nhà (${formatMoney(tile.houseCost)})</button>` : ''}
                             ${tile.type === 'property' && prop.houses > 0 ? `<button type="button" class="btn btn-secondary btn-xs" data-mg="SELL_HOUSE" data-idx="${idx}" ${canS ? '' : 'disabled'}>-Nhà (+${formatMoney(Math.floor(tile.houseCost / 2))})</button>` : ''}
                             ${!prop.mortgaged ? `<button type="button" class="btn btn-accent btn-xs" data-mg="MORTGAGE" data-idx="${idx}" ${canM ? '' : 'disabled'}>Thế chấp (+${formatMoney(Math.floor(tile.price / 2))})</button>` : ''}
                             ${prop.mortgaged ? `<button type="button" class="btn btn-primary btn-xs" data-mg="UNMORTGAGE" data-idx="${idx}" ${canU ? '' : 'disabled'}>Chuộc (-${formatMoney(engine.getUnmortgageCost(idx))})</button>` : ''}
@@ -845,18 +957,15 @@
                 `);
             }
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🏘️ Quản lý Tài Sản — ${formatMoney(player.cash)}</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-close-btn">✕ Đóng</button>
-                </div>
-                ${groupedHtml.length > 0 ? groupedHtml.join('') : '<p class="muted-text">Bạn chưa sở hữu bất động sản nào.</p>'}
-            `, true);
+            const body = groupedHtml.length > 0
+                ? groupedHtml.join('')
+                : '<p class="muted-text" style="text-align:center;padding:12px">Bạn chưa sở hữu bất động sản nào.</p>';
 
-            document.getElementById('modal-close-btn')?.addEventListener('click', () => {
+            this._openBizCardModal(`QUẢN LÝ ĐẤT — ${formatMoney(player.cash)}`, '#0ea5e9', body, () => {
                 this.closeModal();
                 this._renderPhaseOrCustomModal(engine, ctx);
-            });
+            }, true);
+
             document.querySelectorAll('[data-mg]').forEach(btn => {
                 btn.addEventListener('click', () => {
                     this.handlers.onAction({ type: btn.dataset.mg, tileIndex: Number(btn.dataset.idx) });
@@ -920,11 +1029,7 @@
                 }).join('');
             };
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🤝 Đề nghị Giao Dịch</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-close-btn">✕ Đóng</button>
-                </div>
+            const body = `
                 <label class="field-stack" style="margin-bottom:12px">
                     <span>Chọn người giao dịch cùng</span>
                     <select id="trade-partner-select">
@@ -960,10 +1065,12 @@
                     </div>
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-ghost" id="btn-trade-cancel">Hủy</button>
-                    <button type="button" class="btn btn-primary" id="btn-trade-send">📨 Gửi đề nghị</button>
+                    <button type="button" class="btn btn-secondary" id="btn-trade-cancel">Hủy</button>
+                    <button type="button" class="btn btn-arcade-blue" id="btn-trade-send">📨 Gửi đề nghị</button>
                 </div>
-            `, true);
+            `;
+
+            this._openBizCardModal('ĐỀ NGHỊ GIAO DỊCH', '#8b5cf6', body, () => this.closeModal(), true);
 
             const syncDraftInputs = () => {
                 this.tradeDraft.offerCash = Math.max(0, Number(document.getElementById('trade-offer-cash')?.value || 0));
@@ -983,7 +1090,6 @@
                 this._renderTradeModal(engine, ctx);
             });
 
-            document.getElementById('modal-close-btn')?.addEventListener('click', () => this.closeModal());
             document.getElementById('btn-trade-cancel')?.addEventListener('click', () => this.closeModal());
             document.getElementById('btn-trade-send')?.addEventListener('click', () => {
                 syncDraftInputs();
@@ -1010,11 +1116,8 @@
                 return items.length ? items.map(i => `<div>${escapeHtml(i)}</div>`).join('') : '<div class="muted-text">Không có gì</div>';
             };
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🤝 Đề nghị giao dịch đang chờ</h3>
-                </div>
-                <p style="margin-bottom:12px"><strong>${escapeHtml(from.name)}</strong> gửi đề nghị tới <strong>${escapeHtml(to.name)}</strong>:</p>
+            const body = `
+                <p style="margin-bottom:12px;text-align:center"><strong>${escapeHtml(from.name)}</strong> gửi đề nghị tới <strong>${escapeHtml(to.name)}</strong>:</p>
                 <div class="trade-grid">
                     <div class="trade-col">
                         <strong>${escapeHtml(from.name)} đưa:</strong>
@@ -1028,12 +1131,14 @@
                 <div class="modal-actions">
                     ${canDecide ? `
                         <button type="button" class="btn btn-danger" data-act="REJECT_TRADE">❌ Từ chối</button>
-                        <button type="button" class="btn btn-primary" data-act="ACCEPT_TRADE">✅ Đồng ý giao dịch</button>
+                        <button type="button" class="btn btn-arcade-blue" data-act="ACCEPT_TRADE">✅ Đồng ý giao dịch</button>
                     ` : (canCancel
                         ? `<button type="button" class="btn btn-secondary" data-act="REJECT_TRADE">Hủy đề nghị</button>`
                         : `<span class="waiting-pill">⏳ Đang chờ ${escapeHtml(to.name)} trả lời...</span>`)}
                 </div>
-            `, true);
+            `;
+
+            this._openBizCardModal('GIAO DỊCH ĐANG CHỜ', '#8b5cf6', body, null, true);
 
             document.querySelectorAll('[data-act]').forEach(btn => {
                 btn.addEventListener('click', () => this.handlers.onAction({ type: btn.dataset.act }));
@@ -1048,13 +1153,10 @@
                 return engine.getNetWorth(b.id) - engine.getNetWorth(a.id);
             });
 
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🏆 KẾT THÚC VÁN ĐẤU</h3>
-                </div>
-                <div style="text-align:center;margin-bottom:14px">
+            const body = `
+                <div style="text-align:center;margin-bottom:12px">
                     <div style="font-size:48px">👑</div>
-                    <h2 style="color:#fbbf24;margin:6px 0">${escapeHtml(winner?.name || 'Nhà vô địch')}</h2>
+                    <h2 style="color:#d97706;margin:4px 0">${escapeHtml(winner?.name || 'Nhà vô địch')}</h2>
                     <p class="muted-text">Trở thành Tỷ Phú duy nhất sau ${state.turnNumber} lượt!</p>
                 </div>
                 <div class="ranking-list">
@@ -1066,9 +1168,11 @@
                     `).join('')}
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-primary btn-block" id="btn-victory-lobby">🏠 Về Sảnh Chính</button>
+                    <button type="button" class="btn btn-arcade-blue btn-lg btn-block" id="btn-victory-lobby">🏠 Về Sảnh Chính</button>
                 </div>
-            `);
+            `;
+
+            this._openBizCardModal('CHIẾN THẮNG!', '#f59e0b', body, null);
 
             document.getElementById('btn-victory-lobby')?.addEventListener('click', () => {
                 this.closeModal();
@@ -1078,39 +1182,35 @@
 
         openRulesModal() {
             this.activeModal = { type: 'rules' };
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>📖 Luật chơi Cờ Tỷ Phú Việt Nam</h3>
-                    <button type="button" class="btn btn-ghost btn-xs" id="modal-close-btn">✕ Đóng</button>
-                </div>
+            const body = `
                 <div class="rules-list">
-                    <p>• <strong>Mục tiêu:</strong> Mua đất, thu tiền thuê và khiến tất cả đối thủ phá sản để trở thành Tỷ Phú duy nhất.</p>
-                    <p>• <strong>Đi qua Khởi Hành:</strong> Nhận <strong>200k</strong> mỗi vòng đi qua hoặc dừng lại ô Khởi Hành.</p>
-                    <p>• <strong>Độc quyền &amp; Xây nhà:</strong> Khi sở hữu đủ tất cả ô cùng màu, tiền thuê đất trống tăng <strong>×2</strong>. Bạn có thể xây tối đa 4 Nhà (🏠) rồi nâng lên Khách Sạn (🏨), tuân thủ quy tắc <strong>xây đều và bán đều</strong> trong cùng nhóm màu.</p>
-                    <p>• <strong>Đấu giá:</strong> Nếu dừng tại ô chưa có chủ mà không mua ngay, mọi người chơi sẽ tham gia đấu giá công khai.</p>
-                    <p>• <strong>Nhà Tù:</strong> Vào tù nếu đi vào ô Vào Tù, rút thẻ vào tù hoặc tung đôi <strong>3 lần liên tiếp</strong>. Có thể nộp 50k, dùng thẻ Miễn Tù hoặc tung đôi trong tối đa 3 lượt để thoát.</p>
-                    <p>• <strong>Thế chấp:</strong> Có thể thế chấp đất trống để lấy 50% giá trị. Chuộc lại mất giá thế chấp + 10% lãi.</p>
-                    <p>• <strong>Chơi Online P2P:</strong> Tạo phòng lấy mã 6 ký tự (hoặc copy link mời) để bạn bè vào chơi cùng trực tiếp trên trình duyệt qua WebRTC.</p>
+                    <p>• <strong>Mục tiêu:</strong> Mua đất, xây nhà, thu tiền thuê và khiến tất cả đối thủ phá sản.</p>
+                    <p>• <strong>Đi qua Khởi Hành:</strong> Nhận <strong>200k</strong> mỗi vòng đi qua hoặc dừng lại ô START.</p>
+                    <p>• <strong>Độc quyền &amp; Xây nhà:</strong> Khi sở hữu đủ bộ màu, tiền thuê đất trống tăng <strong>×2</strong>. Có thể xây 4 Nhà rồi nâng Khách Sạn (xây đều và bán đều).</p>
+                    <p>• <strong>Đấu giá:</strong> Nếu dừng tại đất trống mà không mua ngay, mọi người chơi sẽ đấu giá công khai.</p>
+                    <p>• <strong>Nhà Tù:</strong> Vào tù khi vào ô Vào Tù, rút thẻ vào tù hoặc tung đôi <strong>3 lần liên tiếp</strong>. Nộp 50k, dùng thẻ Miễn Tù hoặc tung đôi trong 3 lượt để thoát.</p>
+                    <p>• <strong>Góc nhìn 3D/2D:</strong> Nhấn nút <strong>🔍 3D/2D</strong> ở cạnh phải để đổi góc nhìn Isometric hoặc 2D phẳng.</p>
                 </div>
-            `, true);
-            document.getElementById('modal-close-btn')?.addEventListener('click', () => {
+            `;
+            this._openBizCardModal('LUẬT CHƠI CỜ TỶ PHÚ', '#16a34a', body, () => {
                 this.closeModal();
                 if (this._lastEngine) this._renderPhaseOrCustomModal(this._lastEngine, this._lastCtx);
-            });
+            }, true);
         }
 
         openConfirmExitModal() {
             this.activeModal = { type: 'confirm_exit' };
-            this._openModalHtml(`
-                <div class="modal-header">
-                    <h3>🚪 Rời ván đấu hiện tại?</h3>
-                </div>
-                <p class="muted-text" style="margin-bottom:14px">Tiến trình ván đấu hiện tại sẽ kết thúc và bạn sẽ quay lại màn hình sảnh chính.</p>
+            const body = `
+                <p style="text-align:center;margin-bottom:14px" class="muted-text">Tiến trình ván đấu hiện tại sẽ kết thúc và bạn sẽ quay lại màn hình sảnh chính.</p>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-ghost" id="btn-stay">Ở lại chơi tiếp</button>
+                    <button type="button" class="btn btn-secondary" id="btn-stay">Ở lại chơi tiếp</button>
                     <button type="button" class="btn btn-danger" id="btn-confirm-exit">Rời khỏi ván</button>
                 </div>
-            `);
+            `;
+            this._openBizCardModal('RỜI VÁN ĐẤU?', '#e11d48', body, () => {
+                this.closeModal();
+                if (this._lastEngine) this._renderPhaseOrCustomModal(this._lastEngine, this._lastCtx);
+            });
             document.getElementById('btn-stay')?.addEventListener('click', () => {
                 this.closeModal();
                 if (this._lastEngine) this._renderPhaseOrCustomModal(this._lastEngine, this._lastCtx);

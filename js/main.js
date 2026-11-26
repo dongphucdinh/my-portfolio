@@ -92,7 +92,9 @@
             const b1 = document.getElementById('btn-lobby-sound');
             const b2 = document.getElementById('btn-sound');
             if (b1) b1.textContent = label;
-            if (b2) b2.textContent = sound.muted ? '🔇' : '🔊';
+            const b2Span = b2?.querySelector('span');
+            if (b2Span) b2Span.textContent = sound.muted ? '🔇' : '🔊';
+            else if (b2) b2.textContent = sound.muted ? '🔇' : '🔊';
         }
 
         // --- LOBBY SETUP ---
@@ -377,6 +379,10 @@
         function enterGameArena() {
             document.getElementById('screen-lobby').classList.add('hidden');
             document.getElementById('screen-game').classList.remove('hidden');
+            const feed = document.getElementById('left-feed-dock');
+            if (feed) {
+                feed.classList.toggle('collapsed', window.innerWidth <= 760);
+            }
         }
 
         function exitToLobby() {
@@ -576,16 +582,13 @@
             });
         });
 
-        // Mobile tabs
-        document.querySelectorAll('.mobile-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const target = tab.dataset.mtab;
-                document.querySelectorAll('.mobile-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                document.querySelectorAll('[data-mpane]').forEach(p => {
-                    p.classList.toggle('active-mobile-pane', p.dataset.mpane === target);
-                });
-            });
+        document.getElementById('btn-toggle-iso')?.addEventListener('click', () => {
+            const cam = document.getElementById('iso-camera');
+            const isFlat = cam?.classList.toggle('flat-mode');
+            ui.showToast(isFlat ? 'Đã chuyển sang góc nhìn 2D phẳng' : 'Đã chuyển sang góc nhìn 3D Isometric');
+        });
+        document.getElementById('btn-toggle-feed')?.addEventListener('click', () => {
+            document.getElementById('left-feed-dock')?.classList.toggle('collapsed');
         });
 
         // Check ?room=CODE in URL

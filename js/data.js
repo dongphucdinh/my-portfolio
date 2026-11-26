@@ -10,7 +10,7 @@
 
     const AVATARS = ['🎩', '🚗', '🐕', '🚢', '👑', '🚀', '🐱', '⚽'];
 
-    const PLAYER_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b'];
+    const PLAYER_COLORS = ['#f5b800', '#7cc422', '#17a2e5', '#e61e6e'];
 
     const COLOR_GROUPS = {
         brown: { id: 'brown', name: 'Nâu (Miền Tây)', color: '#8b4513', textColor: '#ffffff', tiles: [1, 3] },

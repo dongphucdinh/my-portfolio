@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cờ Tỷ Phú Việt Nam — Chơi Online &amp; Đấu Bot AI</title>
-    <meta name="description" content="Game Cờ Tỷ Phú Việt Nam chuẩn 40 ô: chơi cùng bạn bè trên máy, đấu Bot AI thông minh hoặc chơi Online P2P qua mã phòng.">
+    <title>Cờ Tỷ Phú Việt Nam — Phiên Bản 3D Isometric</title>
+    <meta name="description" content="Game Cờ Tỷ Phú Việt Nam 3D Isometric: chơi cùng bạn bè trên máy, đấu Bot AI hoặc chơi Online P2P qua mã phòng.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';document.head.appendChild(s);"></script>
     <script defer src="js/data.js"></script>
+    <script defer src="js/art.js"></script>
     <script defer src="js/sound.js"></script>
     <script defer src="js/engine.js"></script>
     <script defer src="js/ai.js"></script>
@@ -23,9 +24,9 @@
     <section id="screen-lobby" class="screen-lobby">
         <div class="lobby-shell">
             <header class="lobby-header">
-                <div class="brand-badge">🎲 PHỎNG THEO BÀN CỜ TRUYỀN THỐNG 40 Ô</div>
+                <div class="brand-badge">🎲 PHIÊN BẢN 3D ISOMETRIC • 40 Ô VIỆT NAM</div>
                 <h1>CỜ TỶ PHÚ <span>VIỆT NAM</span></h1>
-                <p>Chinh phục các thành phố khắp ba miền — chơi cùng máy với Bot AI hoặc tạo phòng Online P2P mời bạn bè bằng mã phòng.</p>
+                <p>Xây nhà, thâu tóm bất động sản khắp ba miền — chơi cùng máy với Bot AI hoặc tạo phòng Online P2P mời bạn bè bằng mã phòng.</p>
                 <div class="lobby-top-actions">
                     <button type="button" id="btn-lobby-rules" class="btn btn-ghost btn-sm">📖 Luật chơi</button>
                     <button type="button" id="btn-lobby-sound" class="btn btn-ghost btn-sm">🔊 Âm thanh: Bật</button>
@@ -47,7 +48,7 @@
                     <div class="panel-head-row">
                         <div>
                             <h2>Thiết lập người chơi (2–4 người)</h2>
-                            <p class="muted-text">Chọn tên, nhân vật và bật/tắt Bot AI cho từng vị trí.</p>
+                            <p class="muted-text">Chọn tên, nhân vật và bật/tắt Bot AI cho từng góc bàn.</p>
                         </div>
                         <div class="preset-row">
                             <button type="button" class="btn btn-ghost btn-xs" data-preset="1v3">1 Người + 3 Bot</button>
@@ -73,7 +74,7 @@
                         </label>
                     </div>
 
-                    <button type="button" id="btn-start-local" class="btn btn-primary btn-lg btn-block">
+                    <button type="button" id="btn-start-local" class="btn btn-arcade-blue btn-lg btn-block">
                         🚀 Bắt đầu ván mới
                     </button>
                 </div>
@@ -97,7 +98,7 @@
                         <div class="online-split">
                             <div class="online-box">
                                 <h3>🏠 Tạo phòng mới</h3>
-                                <p class="muted-text">Bạn làm chủ phòng, có thể mời bạn bè qua mã 6 ký tự và thêm Bot AI nếu thiếu người.</p>
+                                <p class="muted-text">Bạn làm chủ phòng, gửi mã 6 ký tự cho bạn bè và thêm Bot AI nếu thiếu người.</p>
                                 <label class="field-inline">
                                     <span>Tiền khởi đầu:</span>
                                     <select id="online-starting-cash">
@@ -110,7 +111,7 @@
                                     <input type="checkbox" id="online-free-parking">
                                     <span>Bật Quỹ Đỗ Xe Miễn Phí</span>
                                 </label>
-                                <button type="button" id="btn-create-room" class="btn btn-primary btn-block">
+                                <button type="button" id="btn-create-room" class="btn btn-arcade-blue btn-block">
                                     ✨ Tạo phòng Online
                                 </button>
                             </div>
@@ -149,7 +150,7 @@
                         <div id="online-slots-list" class="online-slots-list"></div>
 
                         <div id="online-host-controls" class="online-footer-actions hidden">
-                            <button type="button" id="btn-start-online" class="btn btn-primary btn-lg">🚀 Bắt đầu ván đấu</button>
+                            <button type="button" id="btn-start-online" class="btn btn-arcade-blue btn-lg">🚀 Bắt đầu ván đấu</button>
                             <button type="button" id="btn-leave-room" class="btn btn-danger btn-sm">Thoát phòng</button>
                         </div>
                         <div id="online-client-controls" class="online-footer-actions hidden">
@@ -162,98 +163,115 @@
         </div>
     </section>
 
-    <!-- GAME ARENA SCREEN -->
+    <!-- 3D ISOMETRIC TABLETOP GAME ARENA -->
     <section id="screen-game" class="screen-game hidden">
-        <nav class="mobile-tabs" aria-label="Chuyển đổi góc nhìn">
-            <button type="button" class="mobile-tab active" data-mtab="board">🗺️ Bàn cờ</button>
-            <button type="button" class="mobile-tab" data-mtab="players">👥 Người chơi</button>
-            <button type="button" class="mobile-tab" data-mtab="log">📜 Nhật ký</button>
-        </nav>
+        <!-- TOP STATUS PILL -->
+        <div class="top-status-bar">
+            <div id="turn-badge" class="turn-badge">Lượt #1</div>
+            <div id="free-parking-pill" class="pot-pill hidden">
+                🅿️ Quỹ Đỗ Xe: <strong id="pot-amount">0k</strong>
+            </div>
+            <span id="online-room-chip" class="room-chip hidden"></span>
+        </div>
 
-        <div class="arena-layout">
-            <!-- BOARD AREA -->
-            <main class="board-column active-mobile-pane" data-mpane="board">
-                <div class="board-wrapper">
+        <!-- 4 CORNER PLAYER HUD ANCHORS -->
+        <div id="corner-hud-0" class="corner-hud corner-tl hidden"></div>
+        <div id="corner-hud-1" class="corner-hud corner-tr hidden"></div>
+        <div id="corner-hud-2" class="corner-hud corner-bl hidden"></div>
+        <div id="corner-hud-3" class="corner-hud corner-br hidden"></div>
+
+        <!-- LEFT TRANSLUCENT FEED & ONLINE CHAT -->
+        <aside id="left-feed-dock" class="left-feed-dock">
+            <div id="chat-panel" class="chat-panel hidden">
+                <div class="chat-head">💬 Chat phòng Online</div>
+                <div id="chat-messages" class="chat-messages"></div>
+                <div class="emoji-strip">
+                    <button type="button" class="emoji-btn" data-emoji="👍">👍</button>
+                    <button type="button" class="emoji-btn" data-emoji="😂">😂</button>
+                    <button type="button" class="emoji-btn" data-emoji="😱">😱</button>
+                    <button type="button" class="emoji-btn" data-emoji="💸">💸</button>
+                    <button type="button" class="emoji-btn" data-emoji="🔥">🔥</button>
+                </div>
+                <form id="chat-form" class="chat-form">
+                    <input type="text" id="chat-input" maxlength="160" placeholder="Nhắn tin...">
+                    <button type="submit" class="btn btn-arcade-blue btn-xs">Gửi</button>
+                </form>
+            </div>
+            <div class="feed-title">📜 Nhật ký trận đấu</div>
+            <div id="game-log" class="game-log"></div>
+        </aside>
+
+        <!-- RIGHT FLOATING GLOSSY BLUE CIRCULAR ACTION STACK -->
+        <div class="right-fab-stack">
+            <button type="button" id="btn-open-manage" class="fab-btn" title="Quản lý Đất &amp; Xây Nhà">
+                <span>🏘️</span>
+                <small>Đất</small>
+            </button>
+            <button type="button" id="btn-open-trade" class="fab-btn" title="Giao dịch giữa người chơi">
+                <span>🤝</span>
+                <small>Đổi</small>
+            </button>
+            <button type="button" id="btn-toggle-iso" class="fab-btn" title="Đổi góc nhìn 3D / 2D Phẳng">
+                <span>🔍</span>
+                <small>3D/2D</small>
+            </button>
+            <button type="button" id="btn-toggle-feed" class="fab-btn" title="Ẩn/Hiện Nhật ký &amp; Chat">
+                <span>📜</span>
+                <small>Log</small>
+            </button>
+            <button type="button" id="btn-sound" class="fab-btn" title="Bật/Tắt âm thanh">
+                <span>🔊</span>
+                <small>Loa</small>
+            </button>
+            <button type="button" id="btn-rules" class="fab-btn" title="Xem Luật chơi">
+                <span>📖</span>
+                <small>Luật</small>
+            </button>
+            <button type="button" id="btn-exit-game" class="fab-btn fab-danger" title="Thoát về sảnh chính">
+                <span>🚪</span>
+                <small>Thoát</small>
+            </button>
+        </div>
+
+        <!-- CENTER 3D ISOMETRIC STAGE -->
+        <main class="iso-stage">
+            <!-- DECORATIVE TABLE PROPS OUTSIDE DIAMOND -->
+            <div id="table-props-layer" class="table-props-layer" aria-hidden="true"></div>
+
+            <div id="iso-camera" class="iso-camera">
+                <div class="iso-plane">
+                    <div class="board-floor-shadow"></div>
                     <div id="board" class="board">
+                        <div class="board-slab-bottom"></div>
+                        <div class="board-slab-right"></div>
                         <!-- 40 tiles injected by ui.js -->
                         <div id="board-center" class="board-center">
-                            <div class="center-top-bar">
-                                <div class="center-logo">CỜ TỶ PHÚ <span>VN</span></div>
-                                <div id="turn-badge" class="turn-badge">Lượt #1</div>
+                            <div class="pitch-markings">
+                                <div class="pitch-ring"></div>
+                                <div class="pitch-brand">CỜ TỶ PHÚ <span>VN</span></div>
                             </div>
-
-                            <div id="free-parking-pill" class="pot-pill hidden">
-                                🅿️ Quỹ Đỗ Xe: <strong id="pot-amount">0k</strong>
-                            </div>
-
-                            <div class="center-decks">
-                                <div class="deck-card deck-chance">
-                                    <span>❓</span>
-                                    <strong>CƠ HỘI</strong>
-                                </div>
-                                <div class="dice-stage">
-                                    <div id="dice-1" class="die" data-val="1"></div>
-                                    <div id="dice-2" class="die" data-val="1"></div>
-                                </div>
-                                <div class="deck-card deck-chest">
-                                    <span>🎁</span>
-                                    <strong>KHÍ VẬN</strong>
-                                </div>
-                            </div>
-
-                            <div id="center-actions" class="center-actions"></div>
-                            <div id="event-ticker" class="event-ticker">Sẵn sàng tung xúc xắc!</div>
-                            <div id="float-fx-layer" class="float-fx-layer" aria-hidden="true"></div>
                         </div>
                     </div>
                 </div>
-            </main>
+            </div>
 
-            <!-- SIDE PANEL -->
-            <aside class="side-panel">
-                <div class="utility-bar">
-                    <div class="utility-left">
-                        <span id="online-room-chip" class="room-chip hidden"></span>
+            <!-- UN-SKEWED CENTER DICE & FLOATING FX OVERLAY -->
+            <div class="board-hud-overlay">
+                <div class="dice-cluster">
+                    <div class="dice-stage">
+                        <div id="dice-1" class="die" data-val="1"></div>
+                        <div id="dice-2" class="die" data-val="1"></div>
                     </div>
-                    <div class="utility-right">
-                        <button type="button" id="btn-sound" class="btn btn-ghost btn-xs" title="Bật/Tắt âm thanh">🔊</button>
-                        <button type="button" id="btn-rules" class="btn btn-ghost btn-xs">📖 Luật</button>
-                        <button type="button" id="btn-exit-game" class="btn btn-danger btn-xs">Thoát</button>
-                    </div>
+                    <div id="dice-total-badge" class="dice-total-badge">2</div>
                 </div>
+                <div id="float-fx-layer" class="float-fx-layer" aria-hidden="true"></div>
+            </div>
+        </main>
 
-                <div class="side-pane players-pane" data-mpane="players">
-                    <div class="section-title-row">
-                        <h3>Người chơi</h3>
-                        <div class="manage-quick-btns">
-                            <button type="button" id="btn-open-manage" class="btn btn-secondary btn-xs">🏘️ Quản lý Đất</button>
-                            <button type="button" id="btn-open-trade" class="btn btn-accent btn-xs">🤝 Giao dịch</button>
-                        </div>
-                    </div>
-                    <div id="players-list" class="players-list"></div>
-                </div>
-
-                <div class="side-pane log-pane" data-mpane="log">
-                    <div id="chat-panel" class="chat-panel hidden">
-                        <div class="chat-head">💬 Chat phòng Online</div>
-                        <div id="chat-messages" class="chat-messages"></div>
-                        <div class="emoji-strip">
-                            <button type="button" class="emoji-btn" data-emoji="👍">👍</button>
-                            <button type="button" class="emoji-btn" data-emoji="😂">😂</button>
-                            <button type="button" class="emoji-btn" data-emoji="😱">😱</button>
-                            <button type="button" class="emoji-btn" data-emoji="💸">💸</button>
-                            <button type="button" class="emoji-btn" data-emoji="🔥">🔥</button>
-                        </div>
-                        <form id="chat-form" class="chat-form">
-                            <input type="text" id="chat-input" maxlength="160" placeholder="Nhắn tin...">
-                            <button type="submit" class="btn btn-primary btn-xs">Gửi</button>
-                        </form>
-                    </div>
-
-                    <div class="log-head">📜 Nhật ký ván đấu</div>
-                    <div id="game-log" class="game-log"></div>
-                </div>
-            </aside>
+        <!-- BOTTOM-CENTER FLOATING ARCADE CONTROLS -->
+        <div class="bottom-action-dock">
+            <div id="event-ticker" class="event-ticker">Sẵn sàng tung xúc xắc!</div>
+            <div id="center-actions" class="center-actions"></div>
         </div>
     </section>
 
