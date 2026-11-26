@@ -3,6 +3,15 @@
 
     const { BOARD_TILES, COLOR_GROUPS, RESORT_TILES, Art, formatMoney, formatShortMoney } = global.CoTyPhu;
 
+    const DIE_FACE_ANGLES = {
+        1: [0, 0],
+        2: [0, -90],
+        3: [-90, 0],
+        4: [90, 0],
+        5: [0, 90],
+        6: [0, 180]
+    };
+
     function escapeHtml(str) {
         return String(str ?? '')
             .replace(/&/g, '&amp;')
@@ -50,6 +59,9 @@
             this.displayedPositions = {};
             this.lastEventSeq = 0;
             this.hopTimer = null;
+            this.diceRollTimer = null;
+            this.isDiceRolling = false;
+            this.diceSpinCycles = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
             this.activeModal = null;
             this.minimizedPhaseKey = null;
             this.buySelectedLevel = 0;
@@ -74,10 +86,27 @@
         }
 
         _initDicePips() {
+            const pipsHtml = Array.from({ length: 9 }, () => '<span class="pip"></span>').join('');
             for (const id of ['dice-1', 'dice-2']) {
                 const el = document.getElementById(id);
                 if (!el) continue;
-                el.innerHTML = Array.from({ length: 9 }, () => '<span class="pip"></span>').join('');
+                el.innerHTML = [1, 2, 3, 4, 5, 6]
+                    .map(f => `<div class="die-face face-${f}" data-face="${f}">${pipsHtml}</div>`)
+                    .join('');
+            }
+            this._setDiceStatic([1, 1]);
+        }
+
+        _setDiceStatic(diceArr = [1, 1]) {
+            for (let i = 0; i < 2; i++) {
+                const cube = document.getElementById(`dice-${i + 1}`);
+                if (!cube) continue;
+                const val = Number(diceArr[i]) || 1;
+                const [bx, by] = DIE_FACE_ANGLES[val] || [0, 0];
+                const cyc = this.diceSpinCycles[i];
+                cube.style.transition = 'none';
+                cube.dataset.val = String(val);
+                cube.style.transform = `rotateX(${cyc.x + bx}deg) rotateY(${cyc.y + by}deg)`;
             }
         }
 
@@ -165,6 +194,24 @@
                 clearTimeout(this.hopTimer);
                 this.hopTimer = null;
             }
+            if (this.diceRollTimer) {
+                clearTimeout(this.diceRollTimer);
+                this.diceRollTimer = null;
+            }
+            this.isDiceRolling = false;
+            for (const id of ['die-slot-1', 'die-slot-2']) {
+                document.getElementById(id)?.classList.remove('rolling', 'double-glow');
+            }
+            const fxLayer = document.getElementById('dice-impact-fx');
+            if (fxLayer) fxLayer.innerHTML = '';
+            const totalBadge = document.getElementById('dice-total-badge');
+            if (totalBadge) {
+                totalBadge.classList.remove('rolling', 'land-pop', 'is-double');
+                const d = state?.dice || [1, 1];
+                totalBadge.textContent = String((Number(d[0]) || 1) + (Number(d[1]) || 1));
+            }
+            this._setDiceStatic(state?.dice || [1, 1]);
+
             this.displayedPositions = {};
             if (state) {
                 for (const p of state.players) {
@@ -197,23 +244,83 @@
             const evt = state.lastEvent;
             const isNewEvent = evt && evt.seq > this.lastEventSeq;
 
+            if (!isNewEvent && (this.isDiceRolling || this.hopTimer)) {
+                this._renderPlayers(engine, ctx);
+                this._renderLogs(state);
+                this.updateTimerDisplay(state.remainingSeconds);
+                this._renderUtilityBar(ctx);
+                return;
+            }
+
             if (isNewEvent) {
+                if (this.hopTimer) {
+                    clearTimeout(this.hopTimer);
+                    this.hopTimer = null;
+                }
+                if (this.diceRollTimer) {
+                    clearTimeout(this.diceRollTimer);
+                    this.diceRollTimer = null;
+                }
+                if (this.isDiceRolling) {
+                    this.isDiceRolling = false;
+                    for (const id of ['die-slot-1', 'die-slot-2']) {
+                        document.getElementById(id)?.classList.remove('rolling');
+                    }
+                    this._setDiceStatic(state.dice);
+                }
+
                 this.lastEventSeq = evt.seq;
                 this.buySelectedLevel = 0;
                 this.upgradeSelectedLevel = (state.properties[state.pendingTile]?.level || 0) + 1;
                 this.deedPreviewTier = null;
                 this.sellSelectedSet.clear();
                 this.chanceSwapDraft = { ownTile: null, targetTile: null, recipientId: null };
-                this._handleEventFX(evt, ctx);
             }
 
             const shouldHop = isNewEvent && evt && evt.playerId &&
                 typeof evt.fromPos === 'number' && typeof evt.toPos === 'number' &&
                 evt.fromPos !== evt.toPos && evt.type !== 'go_to_island';
 
-            if (this.hopTimer) {
-                clearTimeout(this.hopTimer);
-                this.hopTimer = null;
+            if (isNewEvent && evt.dice) {
+                for (const p of state.players) {
+                    if (p.id === evt.playerId && typeof evt.fromPos === 'number') {
+                        this.displayedPositions[p.id] = evt.fromPos;
+                    } else {
+                        this.displayedPositions[p.id] = p.position;
+                    }
+                }
+                const isDouble = Number(evt.dice[0]) === Number(evt.dice[1]);
+                this._playDiceRollAnimation(evt.dice, isDouble, () => {
+                    const latestEngine = this._lastEngine || engine;
+                    const latestCtx = this._lastCtx || ctx;
+                    const latestState = latestEngine.getState();
+                    this._renderCenter(latestEngine, latestCtx);
+                    if (shouldHop) {
+                        this._animateHop(latestEngine, latestCtx, evt.playerId, evt.fromPos, evt.toPos, () => {
+                            this._handlePostLandingFX(evt, this._lastCtx || latestCtx);
+                        });
+                    } else {
+                        if (latestState) {
+                            for (const p of latestState.players) {
+                                this.displayedPositions[p.id] = p.position;
+                            }
+                        }
+                        this._handlePostLandingFX(evt, latestCtx);
+                        this._renderBoardTiles(latestEngine, latestCtx);
+                        this._renderPhaseOrCustomModal(latestEngine, latestCtx);
+                    }
+                });
+
+                this._renderBoardTiles(engine, ctx);
+                this._renderCenter(engine, ctx);
+                this._renderPlayers(engine, ctx);
+                this._renderLogs(state);
+                this._renderUtilityBar(ctx);
+                return;
+            }
+
+            if (isNewEvent) {
+                this._handleEventFX(evt, ctx);
             }
 
             if (shouldHop) {
@@ -237,19 +344,116 @@
             if (badge) badge.textContent = formatTimer(seconds);
         }
 
-        _handleEventFX(evt, ctx) {
-            if (evt.dice) {
-                for (const id of ['dice-1', 'dice-2']) {
-                    const die = document.getElementById(id);
-                    if (die) {
-                        die.classList.remove('rolling');
-                        void die.offsetWidth;
-                        die.classList.add('rolling');
-                    }
-                }
-                this.sound.dice();
+        _spawnDiceImpactFX(isDouble) {
+            const layer = document.getElementById('dice-impact-fx');
+            if (!layer) return;
+            layer.innerHTML = '';
+
+            const wave = document.createElement('div');
+            wave.className = `dice-shockwave ${isDouble ? 'is-double' : ''}`;
+            layer.appendChild(wave);
+
+            const palette = isDouble
+                ? ['#fde047', '#f59e0b', '#ffffff', '#fb923c']
+                : ['#38bdf8', '#7dd3fc', '#ffffff', '#fde047'];
+
+            for (let i = 0; i < 8; i++) {
+                const spark = document.createElement('span');
+                spark.className = 'dice-spark';
+                const angle = (Math.PI * 2 * i) / 8 + (isDouble ? 0.2 : 0);
+                const dist = (isDouble ? 44 : 34) + (i % 2) * 10;
+                spark.style.setProperty('--tx', `${Math.round(Math.cos(angle) * dist)}px`);
+                spark.style.setProperty('--ty', `${Math.round(Math.sin(angle) * dist)}px`);
+                spark.style.background = palette[i % palette.length];
+                spark.style.boxShadow = `0 0 8px ${palette[i % palette.length]}`;
+                layer.appendChild(spark);
             }
 
+            setTimeout(() => {
+                if (layer) layer.innerHTML = '';
+            }, 650);
+        }
+
+        _playDiceRollAnimation(diceArr, isDouble, onLanded) {
+            if (this.diceRollTimer) {
+                clearTimeout(this.diceRollTimer);
+                this.diceRollTimer = null;
+            }
+            this.isDiceRolling = true;
+            this.sound.dice();
+
+            const totalBadge = document.getElementById('dice-total-badge');
+            const doubleSplash = document.getElementById('double-splash');
+            if (totalBadge) {
+                totalBadge.textContent = '🎲';
+                totalBadge.classList.remove('land-pop', 'is-double');
+                totalBadge.classList.add('rolling');
+            }
+            if (doubleSplash) {
+                doubleSplash.classList.add('hidden');
+            }
+
+            const spinDeltas = [
+                { x: 720, y: 720 },
+                { x: 1080, y: -720 }
+            ];
+
+            for (let i = 0; i < 2; i++) {
+                const slot = document.getElementById(`die-slot-${i + 1}`);
+                const cube = document.getElementById(`dice-${i + 1}`);
+                if (slot) {
+                    slot.classList.remove('rolling', 'double-glow');
+                    void slot.offsetWidth;
+                    slot.classList.add('rolling');
+                }
+                if (cube) {
+                    void cube.offsetWidth;
+                    const val = Number(diceArr[i]) || 1;
+                    const [bx, by] = DIE_FACE_ANGLES[val] || [0, 0];
+                    this.diceSpinCycles[i].x += spinDeltas[i].x;
+                    this.diceSpinCycles[i].y += spinDeltas[i].y;
+                    const dur = i === 0 ? '0.64s' : '0.68s';
+                    cube.style.transition = `transform ${dur} cubic-bezier(0.16, 0.88, 0.28, 1)`;
+                    cube.dataset.val = String(val);
+                    cube.style.transform = `rotateX(${this.diceSpinCycles[i].x + bx}deg) rotateY(${this.diceSpinCycles[i].y + by}deg)`;
+                }
+            }
+
+            this.diceRollTimer = setTimeout(() => {
+                this.diceRollTimer = null;
+                this.isDiceRolling = false;
+
+                for (let i = 0; i < 2; i++) {
+                    const slot = document.getElementById(`die-slot-${i + 1}`);
+                    if (slot) {
+                        slot.classList.remove('rolling');
+                        slot.classList.toggle('double-glow', Boolean(isDouble));
+                    }
+                }
+
+                this.sound.diceLand(isDouble);
+                this._spawnDiceImpactFX(isDouble);
+
+                if (totalBadge) {
+                    totalBadge.classList.remove('rolling');
+                    totalBadge.textContent = String((Number(diceArr[0]) || 0) + (Number(diceArr[1]) || 0));
+                    totalBadge.classList.toggle('is-double', Boolean(isDouble));
+                    void totalBadge.offsetWidth;
+                    totalBadge.classList.add('land-pop');
+                }
+
+                if (typeof onLanded === 'function') {
+                    onLanded();
+                }
+            }, 690);
+        }
+
+        _handleEventFX(evt, ctx) {
+            this._handlePostLandingFX(evt, ctx);
+        }
+
+        _handlePostLandingFX(evt, ctx) {
+            if (!evt) return;
             if (evt.type === 'buy' || evt.type === 'repurchase') this.sound.buy();
             else if (evt.type === 'upgrade' || evt.type === 'championship_hold' || evt.type === 'festival_add') this.sound.build();
             else if (evt.type === 'go_to_island') this.sound.jail();
@@ -257,19 +461,17 @@
             else if (evt.type === 'game_over') this.sound.win();
 
             if (evt.cashDeltas) {
-                const viewerId = ctx.localPlayerId || evt.playerId;
+                const viewerId = ctx?.localPlayerId || evt.playerId;
                 const delta = evt.cashDeltas[viewerId] ?? evt.cashDeltas[evt.playerId];
                 if (delta) {
                     this._spawnFloatDelta(delta);
-                    if (!evt.dice) {
-                        if (delta > 0) this.sound.cash();
-                        else this.sound.pay();
-                    }
+                    if (delta > 0) this.sound.cash();
+                    else this.sound.pay();
                 }
             }
         }
 
-        _animateHop(engine, ctx, playerId, fromPos, toPos) {
+        _animateHop(engine, ctx, playerId, fromPos, toPos, onDone = null) {
             const state = engine.getState();
             for (const p of state.players) {
                 if (p.id !== playerId) this.displayedPositions[p.id] = p.position;
@@ -283,12 +485,15 @@
                 currentStep += 1;
                 this.displayedPositions[playerId] = (fromPos + currentStep) % 32;
                 this.sound.step();
-                this._renderBoardTiles(engine, ctx);
+                this._renderBoardTiles(this._lastEngine || engine, this._lastCtx || ctx);
                 if (currentStep < steps) {
                     this.hopTimer = setTimeout(tick, stepDelay);
                 } else {
                     this.hopTimer = null;
-                    this._renderPhaseOrCustomModal(engine, ctx);
+                    if (typeof onDone === 'function') {
+                        onDone();
+                    }
+                    this._renderPhaseOrCustomModal(this._lastEngine || engine, this._lastCtx || ctx);
                 }
             };
             this.displayedPositions[playerId] = fromPos;
@@ -385,11 +590,31 @@
             const d2 = document.getElementById('dice-2');
             const totalBadge = document.getElementById('dice-total-badge');
             const doubleSplash = document.getElementById('double-splash');
-            if (d1) d1.dataset.val = String(state.dice[0]);
-            if (d2) d2.dataset.val = String(state.dice[1]);
-            if (totalBadge) totalBadge.textContent = String(state.dice[0] + state.dice[1]);
-            if (doubleSplash) {
-                doubleSplash.classList.toggle('hidden', !(state.wasDouble && state.canRollAgain));
+            const showDoubleState = Boolean(state.wasDouble && (state.canRollAgain || state.lastEvent?.type === 'go_to_island'));
+
+            if (!this.isDiceRolling) {
+                if (d1?.dataset.val !== String(state.dice[0]) || d2?.dataset.val !== String(state.dice[1])) {
+                    this._setDiceStatic(state.dice);
+                }
+                for (const id of ['die-slot-1', 'die-slot-2']) {
+                    document.getElementById(id)?.classList.toggle('double-glow', showDoubleState);
+                }
+                if (totalBadge) {
+                    totalBadge.classList.remove('rolling');
+                    totalBadge.textContent = String(state.dice[0] + state.dice[1]);
+                    totalBadge.classList.toggle('is-double', showDoubleState);
+                }
+                if (doubleSplash) {
+                    doubleSplash.textContent = state.lastEvent?.type === 'go_to_island' ? 'DOUBLE ×3!' : 'DOUBLE!';
+                    doubleSplash.classList.toggle('hidden', !showDoubleState);
+                }
+            } else {
+                if (totalBadge) {
+                    totalBadge.textContent = '🎲';
+                    totalBadge.classList.remove('land-pop', 'is-double');
+                    totalBadge.classList.add('rolling');
+                }
+                doubleSplash?.classList.add('hidden');
             }
 
             const ticker = document.getElementById('event-ticker');
@@ -402,6 +627,11 @@
 
             const canAct = ctx.canAct(current.id);
             const isPhaseModalMinimized = this.minimizedPhaseKey === this._getPhaseKey(state);
+
+            if (this.isDiceRolling) {
+                actionsEl.innerHTML = `<span class="waiting-pill">🎲 Đang tung xúc xắc...</span>`;
+                return;
+            }
 
             if (state.phase === 'ROLL') {
                 if (!canAct) {
@@ -1269,7 +1499,7 @@
                     <p>• <strong>Đảo Hoang (Lost Island):</strong> Thoát đảo bằng cách tung Đôi, nộp 200 000, dùng Thẻ Thoát Đảo hoặc chờ đủ 3 lượt.</p>
                 </div>
             `;
-            this._openBizCardModal('LUẬT CHƠI BUSINESS TOUR', '#16a34a', body, () => {
+            this._openBizCardModal('LUẬT CHƠI CỜ TỶ PHÚ', '#16a34a', body, () => {
                 this.closeModal();
                 if (this._lastEngine) this._renderPhaseOrCustomModal(this._lastEngine, this._lastCtx);
             }, true);

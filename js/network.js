@@ -200,7 +200,7 @@
             saveSession({ roomCode: createdCode, playerId: 'p1', name: cleanName, avatar: cleanAvatar });
 
             this._bindRoomListeners(createdCode);
-            this._emitStatus('connected', `Đã mở phòng ${createdCode} (Firebase HTTPS)`);
+            this._emitStatus('connected', `Đã mở phòng ${createdCode}`);
             return { roomCode: createdCode, shareUrl: this.getShareUrl(), lobby: this.lobby };
         }
 

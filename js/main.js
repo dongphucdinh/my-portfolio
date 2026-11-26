@@ -321,7 +321,7 @@
             const startingCash = Number(document.getElementById('online-starting-cash').value) || 2000000;
             const matchMinutes = Number(document.getElementById('online-match-minutes').value);
 
-            showOnlineBanner('Đang khởi tạo phòng P2P...');
+            showOnlineBanner('Đang khởi tạo phòng...');
             try {
                 await network.createRoom(
                     { name, avatar: appState.onlineAvatar },
@@ -571,7 +571,15 @@
             if (!actor || actor.bankrupt) return;
 
             if (actor.isBot) {
-                const delay = state.phase === 'SELL_DEBT' ? 500 : 800;
+                let delay = state.phase === 'SELL_DEBT' ? 500 : 800;
+                const evt = state.lastEvent;
+                if (evt && evt.dice) {
+                    const hasHop = typeof evt.fromPos === 'number' && typeof evt.toPos === 'number' &&
+                        evt.fromPos !== evt.toPos && evt.type !== 'go_to_island';
+                    const steps = hasHop ? (evt.toPos - evt.fromPos + 32) % 32 : 0;
+                    const hopMs = steps > 0 ? steps * (steps > 10 ? 32 : 70) + 120 : 0;
+                    delay = Math.max(delay, 720 + hopMs + 380);
+                }
                 appState.botTimer = setTimeout(() => {
                     const curState = engine.getState();
                     if (!curState || curState.phase === 'GAME_OVER') return;

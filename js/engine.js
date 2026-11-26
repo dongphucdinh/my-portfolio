@@ -112,7 +112,7 @@
             };
 
             const festNames = festCities.map(i => BOARD_TILES[i].name).join(', ');
-            this._addLog(`Ván đấu Business Tour bắt đầu! Mỗi người có ${formatMoney(config.startingCash)}. Lễ hội (×2): ${festNames}.`, 'system');
+            this._addLog(`Ván đấu bắt đầu! Mỗi người có ${formatMoney(config.startingCash)}. Lễ hội (×2): ${festNames}.`, 'system');
             return this.exportState();
         }
 

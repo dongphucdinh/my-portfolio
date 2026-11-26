@@ -58,9 +58,27 @@
         }
 
         dice() {
-            this._tone(240, 0.06, 'triangle', 0.07, 0.00, 320);
-            this._tone(310, 0.06, 'triangle', 0.07, 0.07, 210);
-            this._tone(380, 0.07, 'triangle', 0.08, 0.14, 460);
+            const hits = [
+                [260, 0.045, 0.06, 0.00, 340],
+                [350, 0.045, 0.055, 0.06, 240],
+                [430, 0.05, 0.065, 0.13, 310],
+                [290, 0.05, 0.06, 0.22, 410],
+                [380, 0.055, 0.065, 0.32, 270],
+                [460, 0.06, 0.07, 0.44, 520]
+            ];
+            for (const [f, dur, g, delay, slide] of hits) {
+                this._tone(f, dur, 'triangle', g, delay, slide);
+            }
+        }
+
+        diceLand(isDouble = false) {
+            this._tone(175, 0.09, 'sine', 0.09, 0.00, 92);
+            this._tone(540, 0.06, 'triangle', 0.07, 0.01, 360);
+            if (isDouble) {
+                this._tone(659.25, 0.09, 'triangle', 0.08, 0.06);
+                this._tone(987.77, 0.11, 'triangle', 0.08, 0.13);
+                this._tone(1318.51, 0.18, 'triangle', 0.09, 0.21);
+            }
         }
 
         step() {

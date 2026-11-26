@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cờ Tỷ Phú Business Tour — 3D Isometric</title>
-    <meta name="description" content="Clone chuẩn Business Tour 32 ô 3D Isometric: mua đất xây 3 nhà & khách sạn, mua lại thành phố, 4 Bãi Biển, Đảo Hoang, Giải Vô Địch, World Tour, Bot AI & Online P2P.">
+    <title>Cờ Tỷ Phú</title>
+    <meta name="description" content="Cờ Tỷ Phú 32 ô 3D Isometric: mua đất xây 3 nhà & khách sạn, mua lại thành phố, 4 Bãi Biển, Đảo Hoang, Giải Vô Địch, World Tour, Bot AI & Chơi Online.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
@@ -26,9 +26,9 @@
     <section id="screen-lobby" class="screen-lobby">
         <div class="lobby-shell">
             <header class="lobby-header">
-                <div class="brand-badge">🎲 BUSINESS TOUR EDITION • 32 Ô CHUẨN 3D ISOMETRIC</div>
-                <h1>CỜ TỶ PHÚ <span>BUSINESS TOUR</span></h1>
-                <p>Xây nhà, mua lại thành phố, tranh cúp World Championships, bay World Tour &amp; săn 4 Bãi Biển — chơi cùng Bot AI hoặc Online 4G/Wi-Fi qua Firebase HTTPS.</p>
+                <div class="brand-badge">🎲 32 Ô CHUẨN 3D ISOMETRIC</div>
+                <h1>CỜ TỶ PHÚ</h1>
+                <p>Xây nhà, mua lại thành phố, tranh cúp World Championships, bay World Tour &amp; săn 4 Bãi Biển — chơi cùng Bot AI hoặc Online với bạn bè.</p>
                 <div class="lobby-top-actions">
                     <button type="button" id="btn-lobby-rules" class="btn btn-ghost btn-sm">📖 Luật chơi</button>
                     <button type="button" id="btn-lobby-sound" class="btn btn-ghost btn-sm">🔊 Âm thanh: Bật</button>
@@ -41,7 +41,7 @@
                         🖥️ Chơi trên máy / Đấu Bot
                     </button>
                     <button type="button" class="mode-tab" data-mode="online" role="tab" aria-selected="false">
-                        🌐 Chơi Online (4G / Wi-Fi Realtime)
+                        🌐 Chơi Online
                     </button>
                 </div>
 
@@ -255,7 +255,7 @@
                         <div id="board-center" class="board-center">
                             <div class="pitch-markings">
                                 <div class="pitch-ring"></div>
-                                <div class="pitch-brand">BUSINESS TOUR</div>
+                                <div class="pitch-brand">CỜ TỶ PHÚ</div>
                             </div>
                         </div>
                     </div>
@@ -264,11 +264,26 @@
 
             <!-- UN-SKEWED CENTER SCOREBOARD, DICE & FLOATING FX -->
             <div class="board-hud-overlay">
-                <div class="dice-cluster">
+                <div class="dice-cluster" id="dice-cluster">
                     <div id="match-timer-badge" class="match-timer-badge">20:00</div>
-                    <div class="dice-stage">
-                        <div id="dice-1" class="die" data-val="1"></div>
-                        <div id="dice-2" class="die" data-val="1"></div>
+                    <div class="dice-stage" id="dice-stage">
+                        <div class="die-slot die-slot-1" id="die-slot-1">
+                            <div class="die-shadow"></div>
+                            <div class="die-mover">
+                                <div class="die-tilt">
+                                    <div id="dice-1" class="die-cube" data-val="1"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="die-slot die-slot-2" id="die-slot-2">
+                            <div class="die-shadow"></div>
+                            <div class="die-mover">
+                                <div class="die-tilt">
+                                    <div id="dice-2" class="die-cube" data-val="1"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="dice-impact-fx" class="dice-impact-fx" aria-hidden="true"></div>
                     </div>
                     <div id="dice-total-badge" class="dice-total-badge">2</div>
                     <div id="double-splash" class="double-splash hidden">DOUBLE!</div>
