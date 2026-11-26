@@ -18,6 +18,7 @@
         const appState = {
             mode: 'local', // 'local' | 'online-host' | 'online-client'
             botTimer: null,
+            matchTimer: null,
             localSlots: [
                 { name: 'Bạn', avatar: AVATARS[0], isBot: false },
                 { name: 'Bot Minh', avatar: AVATARS[1], isBot: true },
@@ -33,24 +34,18 @@
         });
 
         const network = new NetworkManager({
-            onStatus: (status, detail) => {
-                showOnlineBanner(detail, false);
-            },
+            onStatus: (_, detail) => showOnlineBanner(detail, false),
             onError: (msg) => {
                 showOnlineBanner(msg, true);
                 ui.showToast(msg, true);
             },
-            onLobbyUpdate: (lobby) => {
-                renderOnlineLobby(lobby);
-            },
+            onLobbyUpdate: (lobby) => renderOnlineLobby(lobby),
             onGameState: (snapshot) => {
                 engine.importState(snapshot);
                 enterGameArena();
                 renderGame();
             },
-            onHostAction: (peerPlayerId, action) => {
-                handleHostReceivedAction(peerPlayerId, action);
-            },
+            onHostAction: (peerPlayerId, action) => handleHostReceivedAction(peerPlayerId, action),
             onPeerDroppedInGame: (slotId, slotName) => {
                 if (!engine.getState()) return;
                 const p = engine.getPlayer(slotId);
@@ -71,9 +66,7 @@
                     renderOnlineLobby(null);
                 }
             },
-            onChatMessage: (msg) => {
-                ui.appendChatMessage(msg);
-            }
+            onChatMessage: (msg) => ui.appendChatMessage(msg)
         });
 
         function showOnlineBanner(msg, isError = false) {
@@ -182,14 +175,10 @@
             document.getElementById('online-slot-count').textContent = String(lobby.slots.length);
 
             const isHost = network.role === 'host';
-            const addBotBtn = document.getElementById('btn-online-add-bot');
-            const hostCtrl = document.getElementById('online-host-controls');
-            const clientCtrl = document.getElementById('online-client-controls');
+            document.getElementById('btn-online-add-bot')?.classList.toggle('hidden', !isHost || lobby.slots.length >= 4);
+            document.getElementById('online-host-controls')?.classList.toggle('hidden', !isHost);
+            document.getElementById('online-client-controls')?.classList.toggle('hidden', isHost);
             const startBtn = document.getElementById('btn-start-online');
-
-            addBotBtn?.classList.toggle('hidden', !isHost || lobby.slots.length >= 4);
-            hostCtrl?.classList.toggle('hidden', !isHost);
-            clientCtrl?.classList.toggle('hidden', isHost);
             if (startBtn) startBtn.disabled = lobby.slots.length < 2;
 
             const listEl = document.getElementById('online-slots-list');
@@ -214,9 +203,7 @@
             }).join('');
 
             listEl.querySelectorAll('[data-rmbot]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    network.removeBotFromLobby(btn.dataset.rmbot);
-                });
+                btn.addEventListener('click', () => network.removeBotFromLobby(btn.dataset.rmbot));
             });
         }
 
@@ -275,29 +262,30 @@
                 isBot: s.isBot,
                 connected: true
             }));
-            const startingCash = Number(document.getElementById('local-starting-cash').value) || 1500;
-            const freeParkingJackpot = Boolean(document.getElementById('local-free-parking').checked);
+            const startingCash = Number(document.getElementById('local-starting-cash').value) || 2000000;
+            const matchMinutes = Number(document.getElementById('local-match-minutes').value);
 
             appState.mode = 'local';
-            engine.initGame(players, { startingCash, freeParkingJackpot });
+            engine.initGame(players, { startingCash, matchMinutes });
             ui.clearChat();
             ui.resetVisualTracking(engine.getState());
             enterGameArena();
             renderGame();
+            startMatchTimerLoop();
             scheduleBotTurnIfNeeded();
         });
 
         // Online Room Actions
         document.getElementById('btn-create-room')?.addEventListener('click', async () => {
             const name = document.getElementById('online-name').value.trim() || 'Chủ phòng';
-            const startingCash = Number(document.getElementById('online-starting-cash').value) || 1500;
-            const freeParkingJackpot = Boolean(document.getElementById('online-free-parking').checked);
+            const startingCash = Number(document.getElementById('online-starting-cash').value) || 2000000;
+            const matchMinutes = Number(document.getElementById('online-match-minutes').value);
 
             showOnlineBanner('Đang khởi tạo phòng P2P...');
             try {
                 await network.createRoom(
                     { name, avatar: appState.onlineAvatar },
-                    { startingCash, freeParkingJackpot }
+                    { startingCash, matchMinutes }
                 );
                 appState.mode = 'online-host';
                 ui.showToast(`Đã mở phòng ${network.roomCode}!`);
@@ -342,9 +330,7 @@
             }
         });
 
-        document.getElementById('btn-online-add-bot')?.addEventListener('click', () => {
-            network.addBotToLobby();
-        });
+        document.getElementById('btn-online-add-bot')?.addEventListener('click', () => network.addBotToLobby());
 
         document.getElementById('btn-start-online')?.addEventListener('click', () => {
             if (network.role !== 'host' || !network.lobby || network.lobby.slots.length < 2) return;
@@ -362,6 +348,7 @@
             network.markGameStarted(engine.exportState());
             enterGameArena();
             renderGame();
+            startMatchTimerLoop();
             scheduleBotTurnIfNeeded();
         });
 
@@ -381,13 +368,15 @@
             document.getElementById('screen-game').classList.remove('hidden');
             const feed = document.getElementById('left-feed-dock');
             if (feed) {
-                feed.classList.toggle('collapsed', window.innerWidth <= 760);
+                feed.classList.toggle('collapsed', window.innerWidth <= 920);
             }
         }
 
         function exitToLobby() {
             clearTimeout(appState.botTimer);
+            clearInterval(appState.matchTimer);
             appState.botTimer = null;
+            appState.matchTimer = null;
             network.disconnect();
             appState.mode = 'local';
             ui.resetVisualTracking(null);
@@ -397,16 +386,41 @@
             document.getElementById('screen-lobby').classList.remove('hidden');
         }
 
+        function startMatchTimerLoop() {
+            clearInterval(appState.matchTimer);
+            appState.matchTimer = null;
+            if (appState.mode === 'online-client') return;
+            const st = engine.getState();
+            if (!st || st.remainingSeconds === null) return;
+
+            appState.matchTimer = setInterval(() => {
+                const cur = engine.getState();
+                if (!cur || cur.phase === 'GAME_OVER' || cur.remainingSeconds === null) {
+                    clearInterval(appState.matchTimer);
+                    appState.matchTimer = null;
+                    return;
+                }
+                cur.remainingSeconds = Math.max(0, cur.remainingSeconds - 1);
+                ui.updateTimerDisplay(cur.remainingSeconds);
+
+                if (cur.remainingSeconds === 0) {
+                    clearInterval(appState.matchTimer);
+                    appState.matchTimer = null;
+                    engine.endByTimer();
+                    if (appState.mode === 'online-host') {
+                        network.broadcastGameState(engine.exportState());
+                    }
+                    renderGame();
+                } else if (appState.mode === 'online-host' && cur.remainingSeconds % 15 === 0) {
+                    network.broadcastGameState(engine.exportState());
+                }
+            }, 1000);
+        }
+
         function getRequiredActorId(state) {
             if (!state) return null;
-            if (state.phase === 'AUCTION' && state.auction) {
-                return state.auction.participants[state.auction.activeIndex] || null;
-            }
-            if (state.phase === 'DEBT_RESOLUTION' && state.pendingDebt) {
+            if (state.phase === 'SELL_DEBT' && state.pendingDebt) {
                 return state.pendingDebt.debtorId;
-            }
-            if (state.phase === 'TRADE_OFFER' && state.trade) {
-                return state.trade.toId;
             }
             return engine.getCurrentPlayer()?.id || null;
         }
@@ -435,23 +449,24 @@
             let res;
             switch (action.type) {
                 case 'ROLL_DICE': res = engine.rollDice(actorId); break;
-                case 'PAY_JAIL_BAIL': res = engine.payJailBail(actorId); break;
-                case 'USE_JAIL_CARD': res = engine.useJailCard(actorId); break;
-                case 'BUY_PROPERTY': res = engine.buyProperty(actorId); break;
-                case 'START_AUCTION': res = engine.startAuction(actorId); break;
-                case 'AUCTION_BID': res = engine.placeAuctionBid(actorId, action.amount); break;
-                case 'AUCTION_PASS': res = engine.passAuction(actorId); break;
-                case 'CONFIRM_CARD': res = engine.confirmCard(actorId); break;
-                case 'BUILD_HOUSE': res = engine.buildHouse(actorId, action.tileIndex); break;
-                case 'SELL_HOUSE': res = engine.sellHouse(actorId, action.tileIndex); break;
-                case 'MORTGAGE': res = engine.mortgageProperty(actorId, action.tileIndex); break;
-                case 'UNMORTGAGE': res = engine.unmortgageProperty(actorId, action.tileIndex); break;
-                case 'RESOLVE_DEBT': res = { ok: engine.resolveDebtIfPaid(actorId) }; break;
+                case 'PAY_JAIL_BAIL': res = engine.payIslandBail(actorId); break;
+                case 'USE_JAIL_CARD': res = engine.useEscapeCard(actorId); break;
+                case 'FLY_WORLD_TOUR': res = engine.flyWorldTour(actorId, action.tileIndex); break;
+                case 'CANCEL_WORLD_TOUR': res = engine.cancelWorldTour(actorId); break;
+                case 'BUY_CITY': res = engine.buyCity(actorId, action.targetLevel); break;
+                case 'SKIP_BUY': res = engine.skipBuy(actorId); break;
+                case 'UPGRADE_CITY': res = engine.upgradeCity(actorId, action.targetLevel); break;
+                case 'SKIP_UPGRADE': res = engine.skipUpgrade(actorId); break;
+                case 'REPURCHASE_CITY': res = engine.repurchaseCity(actorId); break;
+                case 'SKIP_REPURCHASE': res = engine.skipRepurchase(actorId); break;
+                case 'HOLD_CHAMPIONSHIP': res = engine.holdChampionship(actorId, action.tileIndex); break;
+                case 'SKIP_CHAMPIONSHIP': res = engine.skipChampionship(actorId); break;
+                case 'CONFIRM_CHANCE': res = engine.confirmChance(actorId); break;
+                case 'PICK_CHANCE_TARGET': res = engine.pickChanceTarget(actorId, action.payload); break;
+                case 'SKIP_CHANCE_TARGET': res = engine.skipChanceTarget(actorId); break;
+                case 'SELL_DEBT_PROPS': res = engine.sellPropertiesForDebt(actorId, action.tileIndices); break;
+                case 'AUTO_SELL_DEBT': res = engine.autoSellForDebt(actorId); break;
                 case 'DECLARE_BANKRUPTCY': res = engine.declareBankruptcy(actorId); break;
-                case 'PROPOSE_TRADE': res = engine.proposeTrade(actorId, action.payload); break;
-                case 'ACCEPT_TRADE': res = engine.acceptTrade(actorId); break;
-                case 'REJECT_TRADE': res = engine.rejectTrade(actorId); break;
-                case 'END_TURN': res = engine.endTurn(actorId); break;
                 default: res = { ok: false, error: 'Hành động không hợp lệ.' };
             }
 
@@ -469,17 +484,6 @@
             return res;
         }
 
-        function resolveActorForUserAction(state, action) {
-            if (action.type === 'REJECT_TRADE' && state.trade) {
-                if (appState.mode === 'local') return state.trade.toId;
-                return network.localPlayerId;
-            }
-            if (action.type === 'ACCEPT_TRADE' && state.trade) return state.trade.toId;
-            if (action.type === 'AUCTION_BID' || action.type === 'AUCTION_PASS') return engine.getAuctionActiveBidderId();
-            if (action.type === 'RESOLVE_DEBT' || action.type === 'DECLARE_BANKRUPTCY') return state.pendingDebt?.debtorId;
-            return engine.getCurrentPlayer()?.id;
-        }
-
         function dispatchUserAction(action) {
             const state = engine.getState();
             if (!state) return;
@@ -489,7 +493,7 @@
                 return;
             }
 
-            const actorId = resolveActorForUserAction(state, action);
+            const actorId = getRequiredActorId(state);
             if (!actorId) return;
             const actor = engine.getPlayer(actorId);
             if (!actor || actor.isBot) return;
@@ -505,19 +509,8 @@
             const state = engine.getState();
             if (!state || !action || !action.type) return;
 
-            // Authorization check
-            if (action.type === 'REJECT_TRADE' && state.trade) {
-                if (peerPlayerId !== state.trade.toId && peerPlayerId !== state.trade.fromId) return;
-            } else if (action.type === 'ACCEPT_TRADE' && state.trade) {
-                if (peerPlayerId !== state.trade.toId) return;
-            } else if (action.type === 'AUCTION_BID' || action.type === 'AUCTION_PASS') {
-                if (peerPlayerId !== engine.getAuctionActiveBidderId()) return;
-            } else if (action.type === 'RESOLVE_DEBT' || action.type === 'DECLARE_BANKRUPTCY') {
-                if (peerPlayerId !== state.pendingDebt?.debtorId) return;
-            } else {
-                const current = engine.getCurrentPlayer();
-                if (!current || peerPlayerId !== current.id) return;
-            }
+            const requiredId = getRequiredActorId(state);
+            if (!requiredId || peerPlayerId !== requiredId) return;
 
             executeEngineAction(peerPlayerId, action);
         }
@@ -533,7 +526,7 @@
             const actor = engine.getPlayer(actorId);
             if (!actor || actor.bankrupt || !actor.isBot) return;
 
-            const delay = (state.phase === 'AUCTION' || state.phase === 'DEBT_RESOLUTION') ? 450 : 750;
+            const delay = state.phase === 'SELL_DEBT' ? 500 : 800;
             appState.botTimer = setTimeout(() => {
                 const curState = engine.getState();
                 if (!curState || curState.phase === 'GAME_OVER') return;
@@ -556,8 +549,8 @@
         document.getElementById('btn-lobby-rules')?.addEventListener('click', () => ui.openRulesModal());
         document.getElementById('btn-rules')?.addEventListener('click', () => ui.openRulesModal());
         document.getElementById('btn-exit-game')?.addEventListener('click', () => ui.openConfirmExitModal());
-        document.getElementById('btn-open-manage')?.addEventListener('click', () => ui.openManageModal());
-        document.getElementById('btn-open-trade')?.addEventListener('click', () => ui.openTradeModal());
+        document.getElementById('btn-cancel-world-tour')?.addEventListener('click', () => dispatchUserAction({ type: 'CANCEL_WORLD_TOUR' }));
+
         document.getElementById('online-room-chip')?.addEventListener('click', async () => {
             if (!network.roomCode) return;
             try {
@@ -566,7 +559,6 @@
             } catch (_) {}
         });
 
-        // Chat
         document.getElementById('chat-form')?.addEventListener('submit', (e) => {
             e.preventDefault();
             const inp = document.getElementById('chat-input');
@@ -577,9 +569,7 @@
         });
 
         document.querySelectorAll('.emoji-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                network.sendChat(btn.dataset.emoji, { avatar: appState.onlineAvatar });
-            });
+            btn.addEventListener('click', () => network.sendChat(btn.dataset.emoji, { avatar: appState.onlineAvatar }));
         });
 
         document.getElementById('btn-toggle-iso')?.addEventListener('click', () => {

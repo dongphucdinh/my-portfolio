@@ -5,64 +5,42 @@
         ? require('./data.js')
         : global.CoTyPhu;
 
-    const { BOARD_TILES, COLOR_GROUPS, STATION_TILES, UTILITY_TILES } = Data;
+    const { BOARD_TILES, COLOR_GROUPS, RESORT_TILES, BOARD_SIDES } = Data;
 
-    const GROUP_PRIORITY = ['orange', 'red', 'yellow', 'pink', 'green', 'darkblue', 'lightblue', 'brown'];
+    function wouldCompleteColorGroup(state, playerId, tileIndex) {
+        const tile = BOARD_TILES[tileIndex];
+        if (!tile || tile.type !== 'city') return false;
+        return COLOR_GROUPS[tile.group].tiles.every(idx => idx === tileIndex || state.properties[idx].ownerId === playerId);
+    }
 
-    function wouldCompleteMonopoly(state, playerId, tileIndex) {
+    function wouldCompleteLine(state, playerId, tileIndex) {
+        return BOARD_SIDES.some(side =>
+            side.includes(tileIndex) &&
+            side.every(idx => idx === tileIndex || state.properties[idx].ownerId === playerId)
+        );
+    }
+
+    function wouldBlockOpponent(state, botId, tileIndex) {
         const tile = BOARD_TILES[tileIndex];
         if (!tile) return false;
-        if (tile.type === 'property') {
-            const grp = COLOR_GROUPS[tile.group];
-            return grp.tiles.every(idx => idx === tileIndex || state.properties[idx].ownerId === playerId);
+        if (tile.type === 'resort') {
+            const counts = {};
+            for (const r of RESORT_TILES) {
+                const oid = state.properties[r].ownerId;
+                if (oid && oid !== botId) counts[oid] = (counts[oid] || 0) + 1;
+            }
+            return Object.values(counts).some(c => c >= 2);
         }
-        if (tile.type === 'utility') {
-            return UTILITY_TILES.every(idx => idx === tileIndex || state.properties[idx].ownerId === playerId);
-        }
-        if (tile.type === 'station') {
-            const ownedCount = STATION_TILES.filter(idx => state.properties[idx].ownerId === playerId).length;
-            return ownedCount >= 2;
+        if (tile.type === 'city') {
+            const others = COLOR_GROUPS[tile.group].tiles.filter(i => i !== tileIndex);
+            const owners = others.map(i => state.properties[i].ownerId).filter(Boolean);
+            return owners.length === others.length && owners.every(id => id === owners[0] && id !== botId);
         }
         return false;
     }
 
-    function wouldBlockOpponentMonopoly(state, botId, tileIndex) {
-        const tile = BOARD_TILES[tileIndex];
-        if (!tile) return false;
-        if (tile.type === 'property') {
-            const grp = COLOR_GROUPS[tile.group];
-            const otherTiles = grp.tiles.filter(idx => idx !== tileIndex);
-            const owners = otherTiles.map(idx => state.properties[idx].ownerId).filter(Boolean);
-            if (owners.length === otherTiles.length && owners.every(id => id === owners[0] && id !== botId)) {
-                return true;
-            }
-        }
-        if (tile.type === 'station') {
-            const owners = {};
-            for (const idx of STATION_TILES) {
-                const oid = state.properties[idx].ownerId;
-                if (oid && oid !== botId) owners[oid] = (owners[oid] || 0) + 1;
-            }
-            return Object.values(owners).some(c => c >= 2);
-        }
-        if (tile.type === 'utility') {
-            return UTILITY_TILES.some(idx => {
-                const oid = state.properties[idx].ownerId;
-                return oid && oid !== botId;
-            });
-        }
-        return false;
-    }
-
-    function countUnownedPurchasables(state) {
+    function countUnowned(state) {
         return Object.values(state.properties).filter(p => !p.ownerId).length;
-    }
-
-    function estimatePropertyValue(state, tileIndex) {
-        const tile = BOARD_TILES[tileIndex];
-        const prop = state.properties[tileIndex];
-        if (!tile || !tile.price) return 0;
-        return Math.round(tile.price * (prop?.mortgaged ? 0.55 : 1.0));
     }
 
     function chooseAction(engine, botId) {
@@ -73,149 +51,170 @@
         switch (state.phase) {
             case 'ROLL': {
                 if (engine.getCurrentPlayer()?.id !== botId) return null;
-                if (bot.inJail) {
-                    const earlyGame = countUnownedPurchasables(state) > 8;
-                    if (earlyGame) {
-                        if (bot.jailCards > 0) return { type: 'USE_JAIL_CARD' };
-                        if (bot.cash >= 150) return { type: 'PAY_JAIL_BAIL' };
-                    }
+                if (bot.inIsland) {
+                    if (bot.escapeCards > 0) return { type: 'USE_JAIL_CARD' };
+                    if (countUnowned(state) > 8 && bot.cash >= 500000) return { type: 'PAY_JAIL_BAIL' };
                 }
                 return { type: 'ROLL_DICE' };
             }
 
-            case 'BUY_DECISION': {
+            case 'WORLD_TOUR_PICK': {
                 if (engine.getCurrentPlayer()?.id !== botId) return null;
-                const tileIndex = state.pendingTile;
-                const tile = BOARD_TILES[tileIndex];
-                if (!tile) return { type: 'START_AUCTION' };
+                const cost = state.config.worldTourCost;
+                if (bot.cash < cost + 150000) return { type: 'CANCEL_WORLD_TOUR' };
 
-                if (bot.cash >= tile.price) {
-                    const completes = wouldCompleteMonopoly(state, botId, tileIndex);
-                    const blocks = wouldBlockOpponentMonopoly(state, botId, tileIndex);
-                    if (completes || blocks || bot.cash - tile.price >= 160) {
-                        return { type: 'BUY_PROPERTY' };
+                // 1. Instant win via 4th Resort or Line/Triple Monopoly
+                const candidates = Object.keys(state.properties).map(Number);
+                for (const idx of candidates) {
+                    const prop = state.properties[idx];
+                    const tile = BOARD_TILES[idx];
+                    if (prop.ownerId) continue;
+                    const price = tile.price;
+                    if (bot.cash < cost + price) continue;
+                    if (tile.type === 'resort' && engine.getResortCount(botId) === 3) {
+                        return { type: 'FLY_WORLD_TOUR', tileIndex: idx };
+                    }
+                    if (wouldCompleteLine(state, botId, idx)) {
+                        return { type: 'FLY_WORLD_TOUR', tileIndex: idx };
+                    }
+                    if (wouldCompleteColorGroup(state, botId, idx) && engine.getMonopolyCount(botId) === 2) {
+                        return { type: 'FLY_WORLD_TOUR', tileIndex: idx };
                     }
                 }
-                return { type: 'START_AUCTION' };
+
+                // 2. Own House-3 city to upgrade to Hotel
+                const h3City = engine.getOwnedTileIndices(botId).find(idx => {
+                    const t = BOARD_TILES[idx];
+                    return t.type === 'city' && state.properties[idx].level === 3 && bot.cash >= cost + t.hotelCost + 100000;
+                });
+                if (h3City !== undefined) return { type: 'FLY_WORLD_TOUR', tileIndex: h3City };
+
+                // 3. Best unowned high-value city or resort
+                const unowned = candidates
+                    .filter(idx => !state.properties[idx].ownerId && bot.cash >= cost + BOARD_TILES[idx].price + 100000)
+                    .sort((a, b) => BOARD_TILES[b].price - BOARD_TILES[a].price);
+                if (unowned.length > 0) return { type: 'FLY_WORLD_TOUR', tileIndex: unowned[0] };
+
+                return { type: 'CANCEL_WORLD_TOUR' };
             }
 
-            case 'AUCTION': {
-                if (engine.getAuctionActiveBidderId() !== botId) return null;
-                const auc = state.auction;
-                const tile = BOARD_TILES[auc.tileIndex];
-                const completes = wouldCompleteMonopoly(state, botId, auc.tileIndex);
-                const blocks = wouldBlockOpponentMonopoly(state, botId, auc.tileIndex);
-
-                let multiplier = 0.85;
-                if (completes) multiplier = 1.35;
-                else if (blocks) multiplier = 1.2;
-
-                const cashCap = Math.max(0, bot.cash - 80);
-                const maxBid = Math.min(cashCap, Math.floor(tile.price * multiplier));
-                const nextBid = auc.highestBid === 0 ? 10 : auc.highestBid + 10;
-
-                if (nextBid <= maxBid && nextBid <= bot.cash) {
-                    return { type: 'AUCTION_BID', amount: nextBid };
-                }
-                return { type: 'AUCTION_PASS' };
-            }
-
-            case 'CARD_MODAL': {
+            case 'BUY_DECISION': {
                 if (engine.getCurrentPlayer()?.id !== botId) return null;
-                return { type: 'CONFIRM_CARD' };
+                const idx = state.pendingTile;
+                const tile = BOARD_TILES[idx];
+                if (!tile) return { type: 'SKIP_BUY' };
+
+                if (tile.type === 'resort') {
+                    const wantResort = engine.getResortCount(botId) >= 2 || wouldBlockOpponent(state, botId, idx) || bot.cash >= 550000;
+                    return wantResort && bot.cash >= tile.price
+                        ? { type: 'BUY_CITY', targetLevel: 0 }
+                        : { type: 'SKIP_BUY' };
+                }
+
+                const important = wouldCompleteColorGroup(state, botId, idx) || wouldBlockOpponent(state, botId, idx) || wouldCompleteLine(state, botId, idx);
+                const reserve = important ? 120000 : 300000;
+
+                // Pick highest affordable level (up to 3) respecting reserve; fallback to 0 if affordable & important
+                for (let lvl = 3; lvl >= 0; lvl--) {
+                    const cost = engine.getPurchaseCost(idx, lvl);
+                    if (bot.cash - cost >= reserve) {
+                        return { type: 'BUY_CITY', targetLevel: lvl };
+                    }
+                }
+                if (important && bot.cash >= tile.price) {
+                    return { type: 'BUY_CITY', targetLevel: 0 };
+                }
+                return { type: 'SKIP_BUY' };
             }
 
-            case 'DEBT_RESOLUTION': {
+            case 'UPGRADE_DECISION': {
+                if (engine.getCurrentPlayer()?.id !== botId) return null;
+                const idx = state.pendingTile;
+                const prop = state.properties[idx];
+                if (!prop) return { type: 'SKIP_UPGRADE' };
+
+                if (prop.level === 3) {
+                    const cost = engine.getUpgradeCost(idx, 4);
+                    return bot.cash - cost >= 120000
+                        ? { type: 'UPGRADE_CITY', targetLevel: 4 }
+                        : { type: 'SKIP_UPGRADE' };
+                }
+
+                for (let lvl = 3; lvl > prop.level; lvl--) {
+                    const cost = engine.getUpgradeCost(idx, lvl);
+                    if (bot.cash - cost >= 150000) {
+                        return { type: 'UPGRADE_CITY', targetLevel: lvl };
+                    }
+                }
+                return { type: 'SKIP_UPGRADE' };
+            }
+
+            case 'REPURCHASE_DECISION': {
+                if (engine.getCurrentPlayer()?.id !== botId) return null;
+                const rep = state.pendingRepurchase;
+                if (!rep) return { type: 'SKIP_REPURCHASE' };
+
+                const idx = rep.tileIndex;
+                const instantWin = wouldCompleteLine(state, botId, idx) ||
+                    (wouldCompleteColorGroup(state, botId, idx) && engine.getMonopolyCount(botId) >= 2);
+                const strategic = instantWin || wouldCompleteColorGroup(state, botId, idx) || wouldBlockOpponent(state, botId, idx);
+
+                if (instantWin || (strategic && bot.cash - rep.cost >= 200000) || (bot.cash - rep.cost >= 650000)) {
+                    return { type: 'REPURCHASE_CITY' };
+                }
+                return { type: 'SKIP_REPURCHASE' };
+            }
+
+            case 'CHAMPIONSHIP_PICK': {
+                if (engine.getCurrentPlayer()?.id !== botId) return null;
+                if (bot.cash < state.config.championshipCost + 80000) return { type: 'SKIP_CHAMPIONSHIP' };
+                const owned = engine.getOwnedTileIndices(botId)
+                    .sort((a, b) => engine.calculateRent(b) - engine.calculateRent(a));
+                if (owned.length === 0) return { type: 'SKIP_CHAMPIONSHIP' };
+                return { type: 'HOLD_CHAMPIONSHIP', tileIndex: owned[0] };
+            }
+
+            case 'CHANCE_MODAL': {
+                if (engine.getCurrentPlayer()?.id !== botId) return null;
+                return { type: 'CONFIRM_CHANCE' };
+            }
+
+            case 'CHANCE_TARGET_PICK': {
+                if (engine.getCurrentPlayer()?.id !== botId) return null;
+                const tgt = state.pendingChanceTarget;
+                if (!tgt) return { type: 'SKIP_CHANCE_TARGET' };
+
+                if (tgt.action === 'earthquake' || tgt.action === 'power_outage') {
+                    const sorted = tgt.validOppTiles.slice().sort((a, b) => engine.calculateRent(b) - engine.calculateRent(a));
+                    return { type: 'PICK_CHANCE_TARGET', payload: { tileIndex: sorted[0] } };
+                }
+                if (tgt.action === 'shield' || tgt.action === 'festival') {
+                    const sorted = tgt.validOwnTiles.slice().sort((a, b) => engine.calculateRent(b) - engine.calculateRent(a));
+                    return { type: 'PICK_CHANCE_TARGET', payload: { tileIndex: sorted[0] } };
+                }
+                if (tgt.action === 'royal_gift') {
+                    const ownSorted = tgt.validOwnTiles.slice().sort((a, b) => engine.getTileInvestment(a) - engine.getTileInvestment(b));
+                    const recSorted = tgt.validRecipients.slice().sort((a, b) => engine.getNetWorth(a) - engine.getNetWorth(b));
+                    return { type: 'PICK_CHANCE_TARGET', payload: { ownTile: ownSorted[0], recipientId: recSorted[0] } };
+                }
+                if (tgt.action === 'city_swap') {
+                    const ownSorted = tgt.validOwnTiles.slice().sort((a, b) => engine.getTileInvestment(a) - engine.getTileInvestment(b));
+                    const oppSorted = tgt.validOppTiles.slice().sort((a, b) => engine.getTileInvestment(b) - engine.getTileInvestment(a));
+                    if (engine.getTileInvestment(oppSorted[0]) > engine.getTileInvestment(ownSorted[0])) {
+                        return { type: 'PICK_CHANCE_TARGET', payload: { ownTile: ownSorted[0], targetTile: oppSorted[0] } };
+                    }
+                    return { type: 'SKIP_CHANCE_TARGET' };
+                }
+                return { type: 'SKIP_CHANCE_TARGET' };
+            }
+
+            case 'SELL_DEBT': {
                 const debt = state.pendingDebt;
                 if (!debt || debt.debtorId !== botId) return null;
-
-                if (bot.cash >= debt.amount) {
-                    return { type: 'RESOLVE_DEBT' };
-                }
-
-                // If even full liquidation cannot cover debt, declare bankruptcy cleanly
                 if (bot.cash + engine.getLiquidationValue(botId) < debt.amount) {
                     return { type: 'DECLARE_BANKRUPTCY' };
                 }
-
-                const owned = engine.getOwnedTileIndices(botId);
-
-                // 1. Sell houses evenly from lowest-cost groups first
-                const sellable = owned
-                    .filter(idx => engine.canSellOn(botId, idx))
-                    .sort((a, b) => BOARD_TILES[a].houseCost - BOARD_TILES[b].houseCost);
-                if (sellable.length > 0) {
-                    return { type: 'SELL_HOUSE', tileIndex: sellable[0] };
-                }
-
-                // 2. Mortgage non-monopoly properties first, then monopoly ones
-                const mortgageable = owned
-                    .filter(idx => engine.canMortgage(botId, idx))
-                    .sort((a, b) => {
-                        const ta = BOARD_TILES[a];
-                        const tb = BOARD_TILES[b];
-                        const ma = ta.type === 'property' && engine.ownsColorGroup(botId, ta.group) ? 1 : 0;
-                        const mb = tb.type === 'property' && engine.ownsColorGroup(botId, tb.group) ? 1 : 0;
-                        if (ma !== mb) return ma - mb;
-                        return ta.price - tb.price;
-                    });
-                if (mortgageable.length > 0) {
-                    return { type: 'MORTGAGE', tileIndex: mortgageable[0] };
-                }
-
-                return { type: 'DECLARE_BANKRUPTCY' };
-            }
-
-            case 'TRADE_OFFER': {
-                const trade = state.trade;
-                if (!trade || trade.toId !== botId) return null;
-
-                let incomingVal = trade.offerCash + trade.offerJailCards * 45;
-                let outgoingVal = trade.requestCash + trade.requestJailCards * 45;
-
-                for (const idx of trade.offerProps) {
-                    incomingVal += estimatePropertyValue(state, idx);
-                    if (wouldCompleteMonopoly(state, botId, idx)) incomingVal += 250;
-                }
-                for (const idx of trade.requestProps) {
-                    outgoingVal += estimatePropertyValue(state, idx);
-                    if (wouldCompleteMonopoly(state, trade.fromId, idx)) outgoingVal += 300;
-                }
-
-                const netDelta = incomingVal - outgoingVal;
-                return netDelta >= -20 ? { type: 'ACCEPT_TRADE' } : { type: 'REJECT_TRADE' };
-            }
-
-            case 'END_TURN': {
-                if (engine.getCurrentPlayer()?.id !== botId) return null;
-
-                // Unmortgage if rich
-                if (bot.cash > 450) {
-                    const mortgaged = engine.getOwnedTileIndices(botId)
-                        .filter(idx => engine.canUnmortgage(botId, idx))
-                        .sort((a, b) => BOARD_TILES[b].price - BOARD_TILES[a].price);
-                    if (mortgaged.length > 0) {
-                        return { type: 'UNMORTGAGE', tileIndex: mortgaged[0] };
-                    }
-                }
-
-                // Build houses evenly prioritizing best color sets while maintaining reserve
-                const buildCandidates = [];
-                for (const grpId of GROUP_PRIORITY) {
-                    if (!engine.ownsColorGroup(botId, grpId)) continue;
-                    for (const idx of COLOR_GROUPS[grpId].tiles) {
-                        if (engine.canBuildOn(botId, idx) && bot.cash - BOARD_TILES[idx].houseCost >= 220) {
-                            buildCandidates.push(idx);
-                            break;
-                        }
-                    }
-                    if (buildCandidates.length > 0) break;
-                }
-                if (buildCandidates.length > 0) {
-                    return { type: 'BUILD_HOUSE', tileIndex: buildCandidates[0] };
-                }
-
-                return { type: 'END_TURN' };
+                return { type: 'AUTO_SELL_DEBT' };
             }
 
             default:

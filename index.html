@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cờ Tỷ Phú Việt Nam — Phiên Bản 3D Isometric</title>
-    <meta name="description" content="Game Cờ Tỷ Phú Việt Nam 3D Isometric: chơi cùng bạn bè trên máy, đấu Bot AI hoặc chơi Online P2P qua mã phòng.">
+    <title>Cờ Tỷ Phú Business Tour — 3D Isometric</title>
+    <meta name="description" content="Clone chuẩn Business Tour 32 ô 3D Isometric: mua đất xây 3 nhà & khách sạn, mua lại thành phố, 4 Bãi Biển, Đảo Hoang, Giải Vô Địch, World Tour, Bot AI & Online P2P.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
@@ -24,9 +24,9 @@
     <section id="screen-lobby" class="screen-lobby">
         <div class="lobby-shell">
             <header class="lobby-header">
-                <div class="brand-badge">🎲 PHIÊN BẢN 3D ISOMETRIC • 40 Ô VIỆT NAM</div>
-                <h1>CỜ TỶ PHÚ <span>VIỆT NAM</span></h1>
-                <p>Xây nhà, thâu tóm bất động sản khắp ba miền — chơi cùng máy với Bot AI hoặc tạo phòng Online P2P mời bạn bè bằng mã phòng.</p>
+                <div class="brand-badge">🎲 BUSINESS TOUR EDITION • 32 Ô CHUẨN 3D ISOMETRIC</div>
+                <h1>CỜ TỶ PHÚ <span>BUSINESS TOUR</span></h1>
+                <p>Xây nhà, mua lại thành phố, tranh cúp World Championships, bay World Tour &amp; săn 4 Bãi Biển — chơi cùng Bot AI hoặc tạo phòng Online P2P.</p>
                 <div class="lobby-top-actions">
                     <button type="button" id="btn-lobby-rules" class="btn btn-ghost btn-sm">📖 Luật chơi</button>
                     <button type="button" id="btn-lobby-sound" class="btn btn-ghost btn-sm">🔊 Âm thanh: Bật</button>
@@ -63,14 +63,19 @@
                         <label class="field-inline">
                             <span>Tiền khởi đầu:</span>
                             <select id="local-starting-cash">
-                                <option value="1500" selected>1.500k (Chuẩn)</option>
-                                <option value="2000">2.000k (Thoải mái)</option>
-                                <option value="2500">2.500k (Tỷ phú nhanh)</option>
+                                <option value="2000000" selected>2 000 000 (Chuẩn)</option>
+                                <option value="1500000">1 500 000 (Nhanh)</option>
+                                <option value="3000000">3 000 000 (Tỷ phú)</option>
                             </select>
                         </label>
-                        <label class="checkbox-inline">
-                            <input type="checkbox" id="local-free-parking">
-                            <span>Quỹ Đỗ Xe Miễn Phí (gộp tiền thuế &amp; phạt)</span>
+                        <label class="field-inline">
+                            <span>Thời gian trận:</span>
+                            <select id="local-match-minutes">
+                                <option value="20" selected>20 phút (Chuẩn)</option>
+                                <option value="40">40 phút</option>
+                                <option value="60">60 phút</option>
+                                <option value="0">Không giới hạn</option>
+                            </select>
                         </label>
                     </div>
 
@@ -87,7 +92,7 @@
                         <div class="online-profile-box">
                             <label class="field-stack">
                                 <span>Tên hiển thị của bạn</span>
-                                <input type="text" id="online-name" maxlength="18" placeholder="VD: Tỷ Phú Đông" value="Người chơi">
+                                <input type="text" id="online-name" maxlength="18" placeholder="VD: DevNguyen" value="Người chơi">
                             </label>
                             <div class="field-stack">
                                 <span>Chọn biểu tượng</span>
@@ -102,14 +107,19 @@
                                 <label class="field-inline">
                                     <span>Tiền khởi đầu:</span>
                                     <select id="online-starting-cash">
-                                        <option value="1500" selected>1.500k (Chuẩn)</option>
-                                        <option value="2000">2.000k</option>
-                                        <option value="2500">2.500k</option>
+                                        <option value="2000000" selected>2 000 000 (Chuẩn)</option>
+                                        <option value="1500000">1 500 000</option>
+                                        <option value="3000000">3 000 000</option>
                                     </select>
                                 </label>
-                                <label class="checkbox-inline">
-                                    <input type="checkbox" id="online-free-parking">
-                                    <span>Bật Quỹ Đỗ Xe Miễn Phí</span>
+                                <label class="field-inline">
+                                    <span>Thời gian:</span>
+                                    <select id="online-match-minutes">
+                                        <option value="20" selected>20 phút</option>
+                                        <option value="40">40 phút</option>
+                                        <option value="60">60 phút</option>
+                                        <option value="0">Không giới hạn</option>
+                                    </select>
                                 </label>
                                 <button type="button" id="btn-create-room" class="btn btn-arcade-blue btn-block">
                                     ✨ Tạo phòng Online
@@ -168,10 +178,13 @@
         <!-- TOP STATUS PILL -->
         <div class="top-status-bar">
             <div id="turn-badge" class="turn-badge">Lượt #1</div>
-            <div id="free-parking-pill" class="pot-pill hidden">
-                🅿️ Quỹ Đỗ Xe: <strong id="pot-amount">0k</strong>
-            </div>
             <span id="online-room-chip" class="room-chip hidden"></span>
+        </div>
+
+        <!-- WORLD TOUR FLIGHT BANNER -->
+        <div id="world-tour-banner" class="world-tour-banner hidden">
+            <span>✈️ <strong>WORLD TOUR:</strong> Nhấn vào bất kỳ ô nào trên bàn cờ để bay tới (Phí 50 000)</span>
+            <button type="button" id="btn-cancel-world-tour" class="btn btn-danger btn-xs">HỦY (Tung xúc xắc)</button>
         </div>
 
         <!-- 4 CORNER PLAYER HUD ANCHORS -->
@@ -203,14 +216,6 @@
 
         <!-- RIGHT FLOATING GLOSSY BLUE CIRCULAR ACTION STACK -->
         <div class="right-fab-stack">
-            <button type="button" id="btn-open-manage" class="fab-btn" title="Quản lý Đất &amp; Xây Nhà">
-                <span>🏘️</span>
-                <small>Đất</small>
-            </button>
-            <button type="button" id="btn-open-trade" class="fab-btn" title="Giao dịch giữa người chơi">
-                <span>🤝</span>
-                <small>Đổi</small>
-            </button>
             <button type="button" id="btn-toggle-iso" class="fab-btn" title="Đổi góc nhìn 3D / 2D Phẳng">
                 <span>🔍</span>
                 <small>3D/2D</small>
@@ -235,7 +240,6 @@
 
         <!-- CENTER 3D ISOMETRIC STAGE -->
         <main class="iso-stage">
-            <!-- DECORATIVE TABLE PROPS OUTSIDE DIAMOND -->
             <div id="table-props-layer" class="table-props-layer" aria-hidden="true"></div>
 
             <div id="iso-camera" class="iso-camera">
@@ -244,25 +248,27 @@
                     <div id="board" class="board">
                         <div class="board-slab-bottom"></div>
                         <div class="board-slab-right"></div>
-                        <!-- 40 tiles injected by ui.js -->
+                        <!-- 32 tiles injected by ui.js -->
                         <div id="board-center" class="board-center">
                             <div class="pitch-markings">
                                 <div class="pitch-ring"></div>
-                                <div class="pitch-brand">CỜ TỶ PHÚ <span>VN</span></div>
+                                <div class="pitch-brand">BUSINESS TOUR</div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- UN-SKEWED CENTER DICE & FLOATING FX OVERLAY -->
+            <!-- UN-SKEWED CENTER SCOREBOARD, DICE & FLOATING FX -->
             <div class="board-hud-overlay">
                 <div class="dice-cluster">
+                    <div id="match-timer-badge" class="match-timer-badge">20:00</div>
                     <div class="dice-stage">
                         <div id="dice-1" class="die" data-val="1"></div>
                         <div id="dice-2" class="die" data-val="1"></div>
                     </div>
                     <div id="dice-total-badge" class="dice-total-badge">2</div>
+                    <div id="double-splash" class="double-splash hidden">DOUBLE!</div>
                 </div>
                 <div id="float-fx-layer" class="float-fx-layer" aria-hidden="true"></div>
             </div>

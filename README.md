@@ -1,20 +1,12 @@
-# Cờ Tỷ Phú Việt Nam (Web Edition)
+# Cờ Tỷ Phú Business Tour (32 Ô 3D Isometric)
 
-Phiên bản web của trò chơi **Cờ Tỷ Phú** với bàn cờ 40 ô địa danh Việt Nam, hỗ trợ chơi trên cùng thiết bị, đấu với Bot AI và chơi Online P2P qua mã phòng.
+Phiên bản clone chuẩn gameplay **Business Tour** với bàn cờ **32 ô (9×9) 3D Isometric**, chơi trên máy với Bot AI hoặc Online P2P qua mã phòng.
 
-## Tính năng chính
-- **Bàn cờ Việt Nam 40 ô chuẩn**: Từ Cà Mau, Bạc Liêu, Cần Thơ, Đà Lạt, Nha Trang, Đà Nẵng, Huế... đến TP. Hồ Chí Minh và Hà Nội, cùng 4 Nhà Ga và 2 Công Ty Điện/Nước.
-- **Đầy đủ luật Cờ Tỷ Phú**: Tung đôi đi tiếp (3 lần đôi liên tiếp vào tù), đi qua Khởi Hành nhận 200k, độc quyền bộ màu ×2 tiền thuê, xây nhà/khách sạn theo quy tắc xây đều, đấu giá công khai, thế chấp/chuộc đất, giao dịch giữa người chơi, Cơ Hội & Khí Vận (32 thẻ), phá sản.
-- **Chơi trên máy & Bot AI**: Hỗ trợ 2–4 người chơi, tùy chỉnh bật/tắt Bot AI cho từng vị trí.
-- **Chơi Online qua Mã Phòng (P2P)**: Kết nối trực tiếp giữa các trình duyệt bằng PeerJS (WebRTC), tạo mã phòng 6 ký tự / link mời `?room=XXXXXX`, có khung chat & cảm xúc, tự động để Bot AI thế chỗ nếu có người mất kết nối.
-- **Hiệu ứng âm thanh Web Audio API**: Âm thanh xúc xắc, di chuyển, mua đất, xây nhà, vào tù, chiến thắng (có nút bật/tắt).
-
-## Cấu trúc thư mục
-- `index.html`: Giao diện sảnh chờ và bàn cờ.
-- `style.css`: Giao diện responsive cho máy tính và điện thoại.
-- `js/data.js`: Dữ liệu 40 ô bàn cờ, 16 thẻ Cơ Hội, 16 thẻ Khí Vận.
-- `js/engine.js`: State machine xử lý toàn bộ luật chơi.
-- `js/ai.js`: Logic quyết định cho Bot AI.
-- `js/network.js`: Quản lý phòng Online P2P qua PeerJS.
-- `js/sound.js`: Hiệu ứng âm thanh tổng hợp bằng Web Audio API.
-- `js/ui.js` & `js/main.js`: Hiển thị bàn cờ, modal tương tác và điều phối luồng chơi.
+## Tính năng & Luật chơi
+- **Bàn cờ 32 ô chuẩn Business Tour**: `START` (+300 000), `GRANADA -> MADRID`, `BALI`, `HONG KONG -> SHANGHAI`, `LOST ISLAND`, `VENICE -> ROME`, `HAMBURG -> BERLIN`, `CYPRUS`, `WORLD CHAMPIONSHIPS`, `LONDON / SYDNEY`, `DUBAI`, `CHICAGO -> NEW YORK`, `WORLD TOUR`, `NICE`, `LYON / PARIS`, `OSAKA`, `TAX (10%)`, `TOKYO` và 3 ô `CHANCE`.
+- **Mua & Xây dựng trực tiếp**: Chọn mua `Đất` hoặc xây ngay `Nhà 1 / Nhà 2 / Nhà 3` bằng hộp thoại thẻ xếp lớp; quay lại ở vòng sau để nâng lên `Khách Sạn`.
+- **Mua lại (Repurchase)**: Khi vào thành phố chưa lên Khách Sạn của đối thủ, trả tiền thuê xong có thể mua lại với giá `×2`.
+- **4 Bãi Biển (Resorts)**: `BALI`, `CYPRUS`, `DUBAI`, `NICE` (không thể bị mua lại; sở hữu cả 4 thắng ngay!).
+- **Cơ chế đặc biệt**: `World Championships` (nhân `×2..×5` tiền thuê), `World Tour` (bay tới ô bất kỳ ở lượt kế tiếp với phí `50 000`), `Lost Island` (tung đôi / nộp `200 000` / Thẻ Thoát Đảo / đợi 3 lượt), 14 thẻ Cơ Hội (`Động Đất`, `Cúp Điện`, `Khiên`, `Lễ Hội ×2`, `Quà Hoàng Gia`, `Đổi Thành Phố`...).
+- **5 Điều kiện thắng**: Đối thủ phá sản, Sở hữu 4 Bãi Biển, Đủ 3 Bộ Màu, Chiếm trọn 1 Cạnh bàn cờ, hoặc Tổng tài sản cao nhất khi hết giờ.
+- **Chơi Online P2P**: Tạo phòng lấy mã 6 ký tự / link mời `?room=XXXXXX` qua PeerJS, hỗ trợ chat & cảm xúc.

@@ -2,10 +2,12 @@
     'use strict';
 
     const DEFAULT_CONFIG = {
-        startingCash: 1500,
-        goSalary: 200,
-        jailBail: 50,
-        freeParkingJackpot: false
+        startingCash: 2000000,
+        startSalary: 300000,
+        islandBail: 200000,
+        championshipCost: 50000,
+        worldTourCost: 50000,
+        matchMinutes: 20
     };
 
     const AVATARS = ['🎩', '🚗', '🐕', '🚢', '👑', '🚀', '🐱', '⚽'];
@@ -13,105 +15,97 @@
     const PLAYER_COLORS = ['#f5b800', '#7cc422', '#17a2e5', '#e61e6e'];
 
     const COLOR_GROUPS = {
-        brown: { id: 'brown', name: 'Nâu (Miền Tây)', color: '#8b4513', textColor: '#ffffff', tiles: [1, 3] },
-        lightblue: { id: 'lightblue', name: 'Xanh Nhạt (Biển Nam)', color: '#38bdf8', textColor: '#0f172a', tiles: [6, 8, 9] },
-        pink: { id: 'pink', name: 'Hồng (Cao Nguyên & Biển)', color: '#ec4899', textColor: '#ffffff', tiles: [11, 13, 14] },
-        orange: { id: 'orange', name: 'Cam (Di Sản Miền Trung)', color: '#f97316', textColor: '#ffffff', tiles: [16, 18, 19] },
-        red: { id: 'red', name: 'Đỏ (Bắc Trung Bộ)', color: '#ef4444', textColor: '#ffffff', tiles: [21, 23, 24] },
-        yellow: { id: 'yellow', name: 'Vàng (Duyên Hải & Tây Bắc)', color: '#eab308', textColor: '#0f172a', tiles: [26, 27, 29] },
-        green: { id: 'green', name: 'Xanh Lá (Đảo & Công Nghiệp)', color: '#16a34a', textColor: '#ffffff', tiles: [31, 32, 34] },
-        darkblue: { id: 'darkblue', name: 'Xanh Đậm (Đô Thị Đặc Biệt)', color: '#1d4ed8', textColor: '#ffffff', tiles: [37, 39] }
+        brown: { id: 'brown', name: 'Tây Ban Nha', color: '#a16207', textColor: '#ffffff', tiles: [1, 2, 3] },
+        cyan: { id: 'cyan', name: 'Trung Quốc', color: '#0ea5e9', textColor: '#ffffff', tiles: [5, 6, 7] },
+        pink: { id: 'pink', name: 'Ý', color: '#e61e6e', textColor: '#ffffff', tiles: [9, 10, 11] },
+        orange: { id: 'orange', name: 'Đức', color: '#f97316', textColor: '#ffffff', tiles: [13, 15] },
+        red: { id: 'red', name: 'Anh & Úc', color: '#ef4444', textColor: '#ffffff', tiles: [17, 19] },
+        yellow: { id: 'yellow', name: 'Hoa Kỳ', color: '#eab308', textColor: '#0f172a', tiles: [21, 22, 23] },
+        blue: { id: 'blue', name: 'Pháp', color: '#2563eb', textColor: '#ffffff', tiles: [26, 27] },
+        purple: { id: 'purple', name: 'Nhật Bản', color: '#7c3aed', textColor: '#ffffff', tiles: [29, 31] }
     };
 
-    const STATION_TILES = [5, 15, 25, 35];
-    const UTILITY_TILES = [12, 28];
+    const RESORT_TILES = [4, 14, 18, 25];
+
+    const BOARD_SIDES = [
+        [1, 2, 3, 4, 5, 6, 7],
+        [9, 10, 11, 13, 14, 15],
+        [17, 18, 19, 21, 22, 23],
+        [25, 26, 27, 29, 31]
+    ];
 
     const BOARD_TILES = [
-        { index: 0, name: 'Khởi Hành', shortName: 'KHỞI HÀNH', type: 'go', icon: '🏁', description: 'Nhận 200k mỗi lần đi qua hoặc dừng lại.' },
-        { index: 1, name: 'Cà Mau', shortName: 'Cà Mau', type: 'property', group: 'brown', price: 60, rent: [2, 10, 30, 90, 160, 250], houseCost: 50 },
-        { index: 2, name: 'Khí Vận', shortName: 'Khí Vận', type: 'chest', icon: '🎁' },
-        { index: 3, name: 'Bạc Liêu', shortName: 'Bạc Liêu', type: 'property', group: 'brown', price: 60, rent: [4, 20, 60, 180, 320, 450], houseCost: 50 },
-        { index: 4, name: 'Thuế Thu Nhập', shortName: 'Thuế TN', type: 'tax', amount: 200, icon: '💸' },
-        { index: 5, name: 'Ga Sài Gòn', shortName: 'Ga Sài Gòn', type: 'station', price: 200, icon: '🚂' },
-        { index: 6, name: 'Cần Thơ', shortName: 'Cần Thơ', type: 'property', group: 'lightblue', price: 100, rent: [6, 30, 90, 270, 400, 550], houseCost: 50 },
-        { index: 7, name: 'Cơ Hội', shortName: 'Cơ Hội', type: 'chance', icon: '❓' },
-        { index: 8, name: 'Vũng Tàu', shortName: 'Vũng Tàu', type: 'property', group: 'lightblue', price: 100, rent: [6, 30, 90, 270, 400, 550], houseCost: 50 },
-        { index: 9, name: 'Phan Thiết', shortName: 'Phan Thiết', type: 'property', group: 'lightblue', price: 120, rent: [8, 40, 100, 300, 450, 600], houseCost: 50 },
-        { index: 10, name: 'Nhà Tù / Thăm Tù', shortName: 'NHÀ TÙ', type: 'jail', icon: '⛓️', description: 'Thăm tù miễn phí hoặc bị giam giữ.' },
-        { index: 11, name: 'Đà Lạt', shortName: 'Đà Lạt', type: 'property', group: 'pink', price: 140, rent: [10, 50, 150, 450, 625, 750], houseCost: 100 },
-        { index: 12, name: 'Công Ty Điện Lực', shortName: 'Điện Lực', type: 'utility', price: 150, icon: '⚡' },
-        { index: 13, name: 'Nha Trang', shortName: 'Nha Trang', type: 'property', group: 'pink', price: 140, rent: [10, 50, 150, 450, 625, 750], houseCost: 100 },
-        { index: 14, name: 'Quy Nhơn', shortName: 'Quy Nhơn', type: 'property', group: 'pink', price: 160, rent: [12, 60, 180, 500, 700, 900], houseCost: 100 },
-        { index: 15, name: 'Ga Đà Nẵng', shortName: 'Ga Đà Nẵng', type: 'station', price: 200, icon: '🚂' },
-        { index: 16, name: 'Hội An', shortName: 'Hội An', type: 'property', group: 'orange', price: 180, rent: [14, 70, 200, 550, 750, 950], houseCost: 100 },
-        { index: 17, name: 'Khí Vận', shortName: 'Khí Vận', type: 'chest', icon: '🎁' },
-        { index: 18, name: 'Huế', shortName: 'Huế', type: 'property', group: 'orange', price: 180, rent: [14, 70, 200, 550, 750, 950], houseCost: 100 },
-        { index: 19, name: 'Đà Nẵng', shortName: 'Đà Nẵng', type: 'property', group: 'orange', price: 200, rent: [16, 80, 220, 600, 800, 1000], houseCost: 100 },
-        { index: 20, name: 'Đỗ Xe Miễn Phí', shortName: 'ĐỖ XE FREE', type: 'free_parking', icon: '🅿️', description: 'Nghỉ ngơi miễn phí (hoặc nhận Quỹ Đỗ Xe nếu bật).' },
-        { index: 21, name: 'Vinh', shortName: 'Vinh', type: 'property', group: 'red', price: 220, rent: [18, 90, 250, 700, 875, 1050], houseCost: 150 },
-        { index: 22, name: 'Cơ Hội', shortName: 'Cơ Hội', type: 'chance', icon: '❓' },
-        { index: 23, name: 'Ninh Bình', shortName: 'Ninh Bình', type: 'property', group: 'red', price: 220, rent: [18, 90, 250, 700, 875, 1050], houseCost: 150 },
-        { index: 24, name: 'Thanh Hóa', shortName: 'Thanh Hóa', type: 'property', group: 'red', price: 240, rent: [20, 100, 300, 750, 925, 1100], houseCost: 150 },
-        { index: 25, name: 'Ga Vinh', shortName: 'Ga Vinh', type: 'station', price: 200, icon: '🚂' },
-        { index: 26, name: 'Hải Phòng', shortName: 'Hải Phòng', type: 'property', group: 'yellow', price: 260, rent: [22, 110, 330, 800, 975, 1150], houseCost: 150 },
-        { index: 27, name: 'Hạ Long', shortName: 'Hạ Long', type: 'property', group: 'yellow', price: 260, rent: [22, 110, 330, 800, 975, 1150], houseCost: 150 },
-        { index: 28, name: 'Công Ty Cấp Nước', shortName: 'Cấp Nước', type: 'utility', price: 150, icon: '💧' },
-        { index: 29, name: 'Sa Pa', shortName: 'Sa Pa', type: 'property', group: 'yellow', price: 280, rent: [24, 120, 360, 850, 1025, 1200], houseCost: 150 },
-        { index: 30, name: 'Vào Tù', shortName: 'VÀO TÙ', type: 'go_to_jail', icon: '🚓', description: 'Đi thẳng vào Nhà Tù, không nhận lương Khởi Hành.' },
-        { index: 31, name: 'Phú Quốc', shortName: 'Phú Quốc', type: 'property', group: 'green', price: 300, rent: [26, 130, 390, 900, 1100, 1275], houseCost: 200 },
-        { index: 32, name: 'Bình Dương', shortName: 'Bình Dương', type: 'property', group: 'green', price: 300, rent: [26, 130, 390, 900, 1100, 1275], houseCost: 200 },
-        { index: 33, name: 'Khí Vận', shortName: 'Khí Vận', type: 'chest', icon: '🎁' },
-        { index: 34, name: 'Biên Hòa', shortName: 'Biên Hòa', type: 'property', group: 'green', price: 320, rent: [28, 150, 450, 1000, 1200, 1400], houseCost: 200 },
-        { index: 35, name: 'Ga Hà Nội', shortName: 'Ga Hà Nội', type: 'station', price: 200, icon: '🚂' },
-        { index: 36, name: 'Cơ Hội', shortName: 'Cơ Hội', type: 'chance', icon: '❓' },
-        { index: 37, name: 'TP. Hồ Chí Minh', shortName: 'TP. HCM', type: 'property', group: 'darkblue', price: 350, rent: [35, 175, 500, 1100, 1300, 1500], houseCost: 200 },
-        { index: 38, name: 'Thuế Xa Xỉ', shortName: 'Thuế Xa Xỉ', type: 'tax', amount: 100, icon: '💎' },
-        { index: 39, name: 'Hà Nội', shortName: 'Hà Nội', type: 'property', group: 'darkblue', price: 400, rent: [50, 200, 600, 1400, 1700, 2000], houseCost: 200 }
+        { index: 0, name: 'START', shortName: 'START', type: 'start', description: 'Nhận 300 000 mỗi lần đi qua hoặc dừng lại.' },
+        { index: 1, name: 'GRANADA', shortName: 'GRANADA', type: 'city', group: 'brown', price: 60000, houseCost: 50000, hotelCost: 100000, rent: [2000, 10000, 30000, 75000, 120000] },
+        { index: 2, name: 'SEVILLE', shortName: 'SEVILLE', type: 'city', group: 'brown', price: 60000, houseCost: 50000, hotelCost: 100000, rent: [4000, 15000, 45000, 110000, 160000] },
+        { index: 3, name: 'MADRID', shortName: 'MADRID', type: 'city', group: 'brown', price: 80000, houseCost: 50000, hotelCost: 100000, rent: [6000, 20000, 55000, 130000, 180000] },
+        { index: 4, name: 'BALI', shortName: 'BALI', type: 'resort', price: 200000, rent: [25000, 50000, 100000, 200000] },
+        { index: 5, name: 'HONG KONG', shortName: 'HONG KONG', type: 'city', group: 'cyan', price: 100000, houseCost: 50000, hotelCost: 120000, rent: [8000, 25000, 65000, 145000, 195000] },
+        { index: 6, name: 'BEIJING', shortName: 'BEIJING', type: 'city', group: 'cyan', price: 100000, houseCost: 50000, hotelCost: 120000, rent: [8000, 25000, 65000, 145000, 195000] },
+        { index: 7, name: 'SHANGHAI', shortName: 'SHANGHAI', type: 'city', group: 'cyan', price: 120000, houseCost: 50000, hotelCost: 150000, rent: [10000, 30000, 80000, 165000, 225000] },
+        { index: 8, name: 'LOST ISLAND', shortName: 'LOST\nISLAND', type: 'lost_island', description: 'Đảo Hoang! Tung đôi, nộp 200 000 hoặc dùng Thẻ Thoát Đảo để rời khỏi.' },
+        { index: 9, name: 'VENICE', shortName: 'VENICE', type: 'city', group: 'pink', price: 140000, houseCost: 100000, hotelCost: 180000, rent: [12000, 45000, 120000, 260000, 395000] },
+        { index: 10, name: 'MILAN', shortName: 'MILAN', type: 'city', group: 'pink', price: 140000, houseCost: 100000, hotelCost: 180000, rent: [12000, 45000, 125000, 275000, 413000] },
+        { index: 11, name: 'ROME', shortName: 'ROME', type: 'city', group: 'pink', price: 160000, houseCost: 100000, hotelCost: 200000, rent: [15000, 50000, 135000, 300000, 440000] },
+        { index: 12, name: 'CHANCE', shortName: 'CHANCE', type: 'chance' },
+        { index: 13, name: 'HAMBURG', shortName: 'HAMBURG', type: 'city', group: 'orange', price: 180000, houseCost: 100000, hotelCost: 220000, rent: [16000, 55000, 150000, 320000, 468000] },
+        { index: 14, name: 'CYPRUS', shortName: 'CYPRUS', type: 'resort', price: 200000, rent: [25000, 50000, 100000, 200000] },
+        { index: 15, name: 'BERLIN', shortName: 'BERLIN', type: 'city', group: 'orange', price: 200000, houseCost: 100000, hotelCost: 240000, rent: [18000, 60000, 165000, 345000, 495000] },
+        { index: 16, name: 'WORLD CHAMPIONSHIPS', shortName: 'WORLD\nCHAMP', type: 'championship', description: 'Tổ chức Giải Vô Địch trên 1 ô của bạn (phí 50 000) để nhân ×2..×5 tiền thuê!' },
+        { index: 17, name: 'LONDON', shortName: 'LONDON', type: 'city', group: 'red', price: 220000, houseCost: 150000, hotelCost: 260000, rent: [20000, 75000, 195000, 420000, 600000] },
+        { index: 18, name: 'DUBAI', shortName: 'DUBAI', type: 'resort', price: 200000, rent: [25000, 50000, 100000, 200000] },
+        { index: 19, name: 'SYDNEY', shortName: 'SYDNEY', type: 'city', group: 'red', price: 240000, houseCost: 150000, hotelCost: 280000, rent: [22000, 85000, 215000, 460000, 660000] },
+        { index: 20, name: 'CHANCE', shortName: 'CHANCE', type: 'chance' },
+        { index: 21, name: 'CHICAGO', shortName: 'CHICAGO', type: 'city', group: 'yellow', price: 260000, houseCost: 150000, hotelCost: 300000, rent: [24000, 95000, 240000, 500000, 700000] },
+        { index: 22, name: 'LAS VEGAS', shortName: 'LAS VEGAS', type: 'city', group: 'yellow', price: 260000, houseCost: 150000, hotelCost: 300000, rent: [25000, 100000, 255000, 540000, 760000] },
+        { index: 23, name: 'NEW YORK', shortName: 'NEW YORK', type: 'city', group: 'yellow', price: 280000, houseCost: 150000, hotelCost: 320000, rent: [28000, 110000, 275000, 580000, 810000] },
+        { index: 24, name: 'WORLD TOUR', shortName: 'WORLD\nTOUR', type: 'world_tour', description: 'Sẵn sàng dùng máy bay ở lượt tới để bay tới bất kỳ ô nào trên bàn cờ (phí 50 000).' },
+        { index: 25, name: 'NICE', shortName: 'NICE', type: 'resort', price: 200000, rent: [25000, 50000, 100000, 200000] },
+        { index: 26, name: 'LYON', shortName: 'LYON', type: 'city', group: 'blue', price: 300000, houseCost: 200000, hotelCost: 350000, rent: [32000, 125000, 320000, 680000, 950000] },
+        { index: 27, name: 'PARIS', shortName: 'PARIS', type: 'city', group: 'blue', price: 320000, houseCost: 200000, hotelCost: 380000, rent: [35000, 140000, 360000, 760000, 1100000] },
+        { index: 28, name: 'CHANCE', shortName: 'CHANCE', type: 'chance' },
+        { index: 29, name: 'OSAKA', shortName: 'OSAKA', type: 'city', group: 'purple', price: 350000, houseCost: 200000, hotelCost: 420000, rent: [40000, 160000, 410000, 860000, 1250000] },
+        { index: 30, name: 'TAX', shortName: 'TAX', type: 'tax', rate: 0.1, description: 'Nộp thuế 10% tổng giá trị bất động sản đang sở hữu.' },
+        { index: 31, name: 'TOKYO', shortName: 'TOKYO', type: 'city', group: 'purple', price: 400000, houseCost: 200000, hotelCost: 450000, rent: [50000, 190000, 480000, 980000, 1400000] }
     ];
 
     const CHANCE_CARDS = [
-        { id: 'ch1', title: 'Tiến Về Khởi Hành', text: 'Đi thẳng tới ô Khởi Hành và nhận lương 200k.', action: 'move_to', target: 0 },
-        { id: 'ch2', title: 'Thăm Thủ Đô', text: 'Di chuyển tới Hà Nội (ô 39). Nếu đi qua Khởi Hành, nhận 200k.', action: 'move_to', target: 39 },
-        { id: 'ch3', title: 'Du Lịch Đà Nẵng', text: 'Di chuyển tới Đà Nẵng (ô 19). Nếu đi qua Khởi Hành, nhận 200k.', action: 'move_to', target: 19 },
-        { id: 'ch4', title: 'Nghỉ Dưỡng Đà Lạt', text: 'Di chuyển tới Đà Lạt (ô 11). Nếu đi qua Khởi Hành, nhận 200k.', action: 'move_to', target: 11 },
-        { id: 'ch5', title: 'Chuyến Tàu Phương Nam', text: 'Đi tới Ga Sài Gòn (ô 5). Nếu đi qua Khởi Hành, nhận 200k.', action: 'move_to', target: 5 },
-        { id: 'ch6', title: 'Tới Nhà Ga Gần Nhất', text: 'Tiến tới Nhà Ga gần nhất. Nếu đã có chủ, trả gấp đôi tiền thuê!', action: 'nearest_station', multiplier: 2 },
-        { id: 'ch7', title: 'Tới Công Ty Dịch Vụ Gần Nhất', text: 'Tiến tới Công Ty Điện/Nước gần nhất. Nếu có chủ, trả gấp 10 lần tổng xúc xắc!', action: 'nearest_utility', multiplier: 10 },
-        { id: 'ch8', title: 'Quay Lại Phía Sau', text: 'Lùi lại 3 ô.', action: 'move_back', steps: 3 },
-        { id: 'ch9', title: 'Lệnh Bắt Khẩn Cấp', text: 'Đi thẳng vào Nhà Tù! Không qua ô Khởi Hành, không nhận 200k.', action: 'go_to_jail' },
-        { id: 'ch10', title: 'Thẻ Miễn Tù', text: 'Giữ thẻ này để ra tù miễn phí hoặc đem giao dịch.', action: 'jail_free_card' },
-        { id: 'ch11', title: 'Cổ Tức Ngân Hàng', text: 'Ngân hàng trả cổ tức cho bạn 50k.', action: 'collect', amount: 50 },
-        { id: 'ch12', title: 'Đáo Hạn Khoản Đầu Tư', text: 'Khoản đầu tư xây dựng sinh lời, nhận ngay 150k.', action: 'collect', amount: 150 },
-        { id: 'ch13', title: 'Phạt Quá Tốc Độ', text: 'Vi phạm giao thông, nộp phạt 15k.', action: 'pay', amount: 15 },
-        { id: 'ch14', title: 'Tu Sửa Bất Động Sản', text: 'Đóng phí sửa chữa: 25k cho mỗi nhà và 100k cho mỗi khách sạn.', action: 'repairs', perHouse: 25, perHotel: 100 },
-        { id: 'ch15', title: 'Được Bầu Làm Chủ Tịch', text: 'Chiêu đãi mọi người: trả mỗi người chơi đang hoạt động 50k.', action: 'pay_all', amount: 50 },
-        { id: 'ch16', title: 'Thưởng Chứng Khoán', text: 'Thị trường khởi sắc, bạn thu về 100k.', action: 'collect', amount: 100 }
-    ];
-
-    const CHEST_CARDS = [
-        { id: 'cc1', title: 'Về Ô Khởi Hành', text: 'Tiến thẳng tới ô Khởi Hành và nhận 200k.', action: 'move_to', target: 0 },
-        { id: 'cc2', title: 'Ngân Hàng Nhầm Lẫn', text: 'Lỗi hệ thống có lợi cho bạn, nhận thêm 200k.', action: 'collect', amount: 200 },
-        { id: 'cc3', title: 'Phí Khám Bệnh', text: 'Thanh toán hóa đơn phòng khám hết 50k.', action: 'pay', amount: 50 },
-        { id: 'cc4', title: 'Bán Cổ Phiếu', text: 'Bán bớt cổ phiếu thu về 50k.', action: 'collect', amount: 50 },
-        { id: 'cc5', title: 'Ân Xá Miễn Tù', text: 'Nhận 1 thẻ Ra Tù Miễn Phí để dùng khi cần.', action: 'jail_free_card' },
-        { id: 'cc6', title: 'Áp Giải Vào Tù', text: 'Đi thẳng vào Nhà Tù! Không qua Khởi Hành, không nhận 200k.', action: 'go_to_jail' },
-        { id: 'cc7', title: 'Chúc Mừng Sinh Nhật', text: 'Mỗi người chơi khác tặng bạn 20k quà sinh nhật!', action: 'collect_all', amount: 20 },
-        { id: 'cc8', title: 'Hoàn Thuế Thu Nhập', text: 'Cơ quan thuế hoàn trả cho bạn 20k.', action: 'collect', amount: 20 },
-        { id: 'cc9', title: 'Đáo Hạn Bảo Hiểm', text: 'Hợp đồng bảo hiểm nhân thọ đáo hạn, nhận 100k.', action: 'collect', amount: 100 },
-        { id: 'cc10', title: 'Viện Phí Nội Trú', text: 'Thanh toán viện phí 100k.', action: 'pay', amount: 100 },
-        { id: 'cc11', title: 'Đóng Học Phí', text: 'Nộp học phí kỳ mới hết 50k.', action: 'pay', amount: 50 },
-        { id: 'cc12', title: 'Phí Tư Vấn Chiến Lược', text: 'Nhận thù lao tư vấn 25k.', action: 'collect', amount: 25 },
-        { id: 'cc13', title: 'Đóng Góp Hạ Tầng Đô Thị', text: 'Đóng góp 40k cho mỗi nhà và 115k cho mỗi khách sạn.', action: 'repairs', perHouse: 40, perHotel: 115 },
-        { id: 'cc14', title: 'Giải Nhì Duyên Dáng', text: 'Bạn giành giải thưởng cuộc thi địa phương, nhận 10k.', action: 'collect', amount: 10 },
-        { id: 'cc15', title: 'Nhận Thừa Kế', text: 'Bạn được thừa kế tài sản trị giá 100k.', action: 'collect', amount: 100 },
-        { id: 'cc16', title: 'Trợ Cấp Du Lịch', text: 'Nhận voucher hoàn tiền du lịch trị giá 75k.', action: 'collect', amount: 75 }
+        { id: 'bt1', title: 'ĐỘNG ĐẤT (EARTHQUAKE)', text: 'Chọn 1 thành phố (chưa phải Khách sạn) của đối thủ để phá hủy trả về đất trống! (Khiên sẽ chặn)', action: 'earthquake' },
+        { id: 'bt2', title: 'QUÀ HOÀNG GIA (ROYAL GIFT)', text: 'Tặng miễn phí 1 thành phố bất kỳ của bạn cho 1 đối thủ.', action: 'royal_gift' },
+        { id: 'bt3', title: 'KHIÊN BẢO VỆ (SHIELD)', text: 'Đặt Khiên lên 1 thành phố của bạn để chặn 1 lần Động Đất, Cúp Điện hoặc Đổi Đất.', action: 'shield' },
+        { id: 'bt4', title: 'CÚP ĐIỆN (POWER OUTAGE)', text: 'Cắt điện 1 thành phố của đối thủ trong 2 vòng — tiền thuê giảm về 0! (Khiên sẽ chặn)', action: 'power_outage' },
+        { id: 'bt5', title: 'LỄ HỘI THÀNH PHỐ (FESTIVAL)', text: 'Tổ chức Lễ Hội nhân ×2 tiền thuê vĩnh viễn cho 1 thành phố bạn sở hữu!', action: 'festival' },
+        { id: 'bt6', title: 'HOÁN ĐỔI ĐẤT (CITY SWAP)', text: 'Đổi 1 thành phố của bạn lấy 1 thành phố (chưa phải Khách sạn / Khu nghỉ dưỡng) của đối thủ!', action: 'city_swap' },
+        { id: 'bt7', title: 'THẺ THOÁT ĐẢO (ESCAPE)', text: 'Giữ thẻ này để rời khỏi Đảo Hoang miễn phí bất cứ lúc nào.', action: 'escape_card' },
+        { id: 'bt8', title: 'VÉ MÁY BAY VIP (WORLD TOUR)', text: 'Di chuyển ngay tới ô World Tour (ô 24) và sẵn sàng bay ở lượt kế tiếp!', action: 'go_world_tour' },
+        { id: 'bt9', title: 'THƯ MỜI VÔ ĐỊCH', text: 'Di chuyển thẳng tới ô World Championships (ô 16) để nhân tiền thuê!', action: 'go_championship' },
+        { id: 'bt10', title: 'LẠC VÀO ĐẢO HOANG', text: 'Bị đưa thẳng ra Đảo Hoang (ô 8)! Không qua START, không nhận 300 000.', action: 'go_lost_island' },
+        { id: 'bt11', title: 'VỀ ĐIỂM XUẤT PHÁT', text: 'Tiến thẳng về ô START (ô 0) và nhận thưởng 300 000!', action: 'go_start' },
+        { id: 'bt12', title: 'CHÚC MỪNG SINH NHẬT', text: 'Mỗi người chơi khác tặng bạn 50 000 quà sinh nhật!', action: 'birthday', amount: 50000 },
+        { id: 'bt13', title: 'TRÚNG SỐ ĐỘC ĐẮC', text: 'Ngân hàng trao thưởng nóng cho bạn 250 000!', action: 'jackpot', amount: 250000 },
+        { id: 'bt14', title: 'KIỂM TRA THUẾ ĐẶC BIỆT', text: 'Nộp thuế 10% tổng giá trị bất động sản (tối thiểu 100 000 nếu chưa có đất).', action: 'tax_audit' }
     ];
 
     function formatMoney(amount) {
         const num = Number(amount) || 0;
         const sign = num < 0 ? '-' : '';
         const abs = Math.abs(Math.round(num));
-        return sign + abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'k';
+        return sign + abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    }
+
+    function formatShortMoney(amount) {
+        const num = Number(amount) || 0;
+        const sign = num < 0 ? '-' : '';
+        const abs = Math.abs(num);
+        if (abs >= 1000000) {
+            const m = (abs / 1000000).toFixed(2).replace(/\.?0+$/, '');
+            return sign + m + 'M';
+        }
+        if (abs >= 1000) {
+            const k = (abs / 1000).toFixed(1).replace(/\.0$/, '');
+            return sign + k + 'K';
+        }
+        return sign + String(Math.round(abs));
     }
 
     const api = {
@@ -119,12 +113,12 @@
         AVATARS,
         PLAYER_COLORS,
         COLOR_GROUPS,
-        STATION_TILES,
-        UTILITY_TILES,
+        RESORT_TILES,
+        BOARD_SIDES,
         BOARD_TILES,
         CHANCE_CARDS,
-        CHEST_CARDS,
-        formatMoney
+        formatMoney,
+        formatShortMoney
     };
 
     global.CoTyPhu = Object.assign(global.CoTyPhu || {}, api);

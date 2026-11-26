@@ -9,12 +9,12 @@
         DEFAULT_CONFIG,
         PLAYER_COLORS,
         COLOR_GROUPS,
-        STATION_TILES,
-        UTILITY_TILES,
+        RESORT_TILES,
+        BOARD_SIDES,
         BOARD_TILES,
         CHANCE_CARDS,
-        CHEST_CARDS,
-        formatMoney
+        formatMoney,
+        formatShortMoney
     } = Data;
 
     function clone(val) {
@@ -55,49 +55,64 @@
                 isBot: Boolean(cfg.isBot),
                 cash: config.startingCash,
                 position: 0,
-                inJail: false,
-                jailTurns: 0,
-                jailCards: 0,
+                inIsland: false,
+                islandTurns: 0,
+                escapeCards: 0,
+                readyToFly: false,
                 bankrupt: false,
                 connected: cfg.connected !== undefined ? Boolean(cfg.connected) : true
             }));
 
             const properties = {};
+            const cityIndices = [];
             for (const tile of BOARD_TILES) {
-                if (tile.type === 'property' || tile.type === 'station' || tile.type === 'utility') {
+                if (tile.type === 'city' || tile.type === 'resort') {
                     properties[tile.index] = {
                         ownerId: null,
-                        houses: 0,
-                        mortgaged: false
+                        level: 0,
+                        shielded: false,
+                        festival: false,
+                        outageTurns: 0
                     };
+                    if (tile.type === 'city') cityIndices.push(tile.index);
                 }
+            }
+
+            // Pick 2 random cities to start with Festival x2 (matching Business Tour)
+            const festCities = shuffle(cityIndices, this.rng).slice(0, 2);
+            for (const fIdx of festCities) {
+                properties[fIdx].festival = true;
             }
 
             this.state = {
                 config,
                 players,
                 properties,
+                championshipTile: null,
+                championshipMult: 1,
                 currentPlayerIndex: 0,
                 phase: 'ROLL',
                 dice: [1, 1],
                 doublesCount: 0,
                 canRollAgain: false,
+                wasDouble: false,
                 pendingTile: null,
                 pendingCard: null,
+                pendingChanceTarget: null,
+                pendingRepurchase: null,
                 pendingDebt: null,
-                auction: null,
-                trade: null,
-                freeParkingPot: 0,
                 chanceDeck: shuffle(CHANCE_CARDS.map((_, i) => i), this.rng),
-                chestDeck: shuffle(CHEST_CARDS.map((_, i) => i), this.rng),
                 turnNumber: 1,
+                remainingSeconds: config.matchMinutes > 0 ? config.matchMinutes * 60 : null,
                 logs: [],
                 winnerId: null,
+                winReason: null,
                 eventSeq: 0,
                 lastEvent: null
             };
 
-            this._addLog(`Ván đấu bắt đầu! Mỗi người có ${formatMoney(config.startingCash)}. Lượt của ${players[0].name}.`, 'system');
+            const festNames = festCities.map(i => BOARD_TILES[i].name).join(', ');
+            this._addLog(`Ván đấu Business Tour bắt đầu! Mỗi người có ${formatMoney(config.startingCash)}. Lễ hội (×2): ${festNames}.`, 'system');
             return this.exportState();
         }
 
@@ -160,13 +175,66 @@
             return Math.floor(this.rng() * 6) + 1;
         }
 
+        // ==================== VALUATION & RENT ====================
+
+        getTileInvestmentAtLevel(tileIndex, level = 0) {
+            const tile = BOARD_TILES[tileIndex];
+            if (!tile) return 0;
+            if (tile.type === 'resort') return tile.price;
+            if (tile.type !== 'city') return 0;
+            const houses = Math.min(Math.max(0, level), 3);
+            const hotel = level >= 4 ? tile.hotelCost : 0;
+            return tile.price + houses * tile.houseCost + hotel;
+        }
+
+        getTileInvestment(tileIndex) {
+            const prop = this.state.properties[tileIndex];
+            if (!prop) return 0;
+            return this.getTileInvestmentAtLevel(tileIndex, prop.level);
+        }
+
+        getPurchaseCost(tileIndex, targetLevel = 0) {
+            const tile = BOARD_TILES[tileIndex];
+            if (!tile) return 0;
+            if (tile.type === 'resort') return tile.price;
+            const capped = Math.min(Math.max(0, targetLevel), 3);
+            return this.getTileInvestmentAtLevel(tileIndex, capped);
+        }
+
+        getUpgradeCost(tileIndex, targetLevel) {
+            const prop = this.state.properties[tileIndex];
+            if (!prop) return 0;
+            if (targetLevel <= prop.level || targetLevel > 4) return 0;
+            return this.getTileInvestmentAtLevel(tileIndex, targetLevel) - this.getTileInvestmentAtLevel(tileIndex, prop.level);
+        }
+
+        getRepurchaseCost(tileIndex) {
+            const tile = BOARD_TILES[tileIndex];
+            const prop = this.state.properties[tileIndex];
+            if (!tile || tile.type !== 'city' || !prop || !prop.ownerId || prop.level >= 4) return 0;
+            return 2 * this.getTileInvestment(tileIndex);
+        }
+
+        getSaleValue(tileIndex) {
+            return Math.floor(this.getTileInvestment(tileIndex) * 0.5);
+        }
+
         ownsColorGroup(playerId, groupId) {
             const grp = COLOR_GROUPS[groupId];
             if (!grp) return false;
-            return grp.tiles.every(idx => {
-                const prop = this.state.properties[idx];
-                return prop && prop.ownerId === playerId;
-            });
+            return grp.tiles.every(idx => this.state.properties[idx]?.ownerId === playerId);
+        }
+
+        getMonopolyCount(playerId) {
+            return Object.keys(COLOR_GROUPS).filter(gid => this.ownsColorGroup(playerId, gid)).length;
+        }
+
+        getResortCount(playerId) {
+            return RESORT_TILES.filter(idx => this.state.properties[idx]?.ownerId === playerId).length;
+        }
+
+        hasLineMonopoly(playerId) {
+            return BOARD_SIDES.some(side => side.every(idx => this.state.properties[idx]?.ownerId === playerId));
         }
 
         getOwnedTileIndices(playerId) {
@@ -175,179 +243,239 @@
                 .filter(idx => this.state.properties[idx].ownerId === playerId);
         }
 
-        groupHasHouses(groupId) {
-            const grp = COLOR_GROUPS[groupId];
-            if (!grp) return false;
-            return grp.tiles.some(idx => (this.state.properties[idx]?.houses || 0) > 0);
-        }
-
-        groupHasMortgaged(groupId) {
-            const grp = COLOR_GROUPS[groupId];
-            if (!grp) return false;
-            return grp.tiles.some(idx => Boolean(this.state.properties[idx]?.mortgaged));
-        }
-
-        canBuildOn(playerId, tileIndex) {
+        calculateRent(tileIndex) {
             const tile = BOARD_TILES[tileIndex];
             const prop = this.state.properties[tileIndex];
-            const player = this.getPlayer(playerId);
-            if (!tile || tile.type !== 'property' || !prop || !player || player.bankrupt) return false;
-            if (prop.ownerId !== playerId || prop.mortgaged) return false;
-            if (!this.ownsColorGroup(playerId, tile.group)) return false;
-            if (this.groupHasMortgaged(tile.group)) return false;
-            if (prop.houses >= 5) return false;
-            if (player.cash < tile.houseCost) return false;
-            const minHouses = Math.min(...COLOR_GROUPS[tile.group].tiles.map(i => this.state.properties[i].houses));
-            return prop.houses === minHouses;
-        }
+            if (!tile || !prop || !prop.ownerId || prop.outageTurns > 0) return 0;
 
-        canSellOn(playerId, tileIndex) {
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            const player = this.getPlayer(playerId);
-            if (!tile || tile.type !== 'property' || !prop || !player || player.bankrupt) return false;
-            if (prop.ownerId !== playerId || prop.houses <= 0) return false;
-            const maxHouses = Math.max(...COLOR_GROUPS[tile.group].tiles.map(i => this.state.properties[i].houses));
-            return prop.houses === maxHouses;
-        }
+            const champMult = this.state.championshipTile === tileIndex ? this.state.championshipMult : 1;
 
-        canMortgage(playerId, tileIndex) {
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            const player = this.getPlayer(playerId);
-            if (!tile || !prop || !player || player.bankrupt) return false;
-            if (prop.ownerId !== playerId || prop.mortgaged) return false;
-            if (tile.type === 'property' && this.groupHasHouses(tile.group)) return false;
-            return true;
-        }
-
-        getUnmortgageCost(tileIndex) {
-            const tile = BOARD_TILES[tileIndex];
-            if (!tile || !tile.price) return 0;
-            return Math.ceil((tile.price / 2) * 1.1);
-        }
-
-        canUnmortgage(playerId, tileIndex) {
-            const prop = this.state.properties[tileIndex];
-            const player = this.getPlayer(playerId);
-            if (!prop || !player || player.bankrupt) return false;
-            if (prop.ownerId !== playerId || !prop.mortgaged) return false;
-            return player.cash >= this.getUnmortgageCost(tileIndex);
-        }
-
-        calculateRent(tileIndex, diceSum = 7, multiplierOverride = null) {
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            if (!tile || !prop || !prop.ownerId || prop.mortgaged) return 0;
-
-            if (tile.type === 'property') {
-                if (prop.houses > 0) {
-                    return tile.rent[prop.houses];
-                }
-                const hasMonopoly = this.ownsColorGroup(prop.ownerId, tile.group);
-                return hasMonopoly ? tile.rent[0] * 2 : tile.rent[0];
+            if (tile.type === 'resort') {
+                const count = this.getResortCount(prop.ownerId);
+                const base = tile.rent[Math.max(0, count - 1)] || tile.rent[0];
+                return base * champMult;
             }
 
-            if (tile.type === 'station') {
-                const count = STATION_TILES.filter(idx => {
-                    const st = this.state.properties[idx];
-                    return st && st.ownerId === prop.ownerId && !st.mortgaged;
-                }).length;
-                const base = 25 * Math.pow(2, Math.max(0, count - 1));
-                return multiplierOverride ? base * multiplierOverride : base;
-            }
-
-            if (tile.type === 'utility') {
-                if (multiplierOverride) {
-                    return diceSum * multiplierOverride;
-                }
-                const count = UTILITY_TILES.filter(idx => {
-                    const ut = this.state.properties[idx];
-                    return ut && ut.ownerId === prop.ownerId && !ut.mortgaged;
-                }).length;
-                return diceSum * (count >= 2 ? 10 : 4);
+            if (tile.type === 'city') {
+                const base = tile.rent[prop.level] || tile.rent[0];
+                const monoMult = this.ownsColorGroup(prop.ownerId, tile.group) ? 2 : 1;
+                const festMult = prop.festival ? 2 : 1;
+                return base * monoMult * festMult * champMult;
             }
 
             return 0;
         }
 
-        getNetWorth(playerId) {
-            const player = this.getPlayer(playerId);
-            if (!player || player.bankrupt) return 0;
-            let total = player.cash;
+        getTotalPropertyValue(playerId) {
+            let total = 0;
             for (const idx of this.getOwnedTileIndices(playerId)) {
-                const tile = BOARD_TILES[idx];
-                const prop = this.state.properties[idx];
-                total += prop.mortgaged ? Math.floor(tile.price / 2) : tile.price;
-                if (tile.type === 'property' && prop.houses > 0) {
-                    total += prop.houses * tile.houseCost;
-                }
+                total += this.getTileInvestment(idx);
             }
             return total;
         }
 
         getLiquidationValue(playerId) {
-            const player = this.getPlayer(playerId);
-            if (!player || player.bankrupt) return 0;
             let total = 0;
             for (const idx of this.getOwnedTileIndices(playerId)) {
-                const tile = BOARD_TILES[idx];
-                const prop = this.state.properties[idx];
-                if (tile.type === 'property' && prop.houses > 0) {
-                    total += prop.houses * Math.floor(tile.houseCost / 2);
-                }
-                if (!prop.mortgaged) {
-                    total += Math.floor(tile.price / 2);
-                }
+                total += this.getSaleValue(idx);
             }
             return total;
         }
 
-        _isManagementAllowed(playerId) {
-            const current = this.getCurrentPlayer();
-            if (!current || current.id !== playerId || current.bankrupt) return false;
-            const p = this.state.phase;
-            return p === 'ROLL' || p === 'END_TURN' || (p === 'DEBT_RESOLUTION' && this.state.pendingDebt?.debtorId === playerId);
+        getNetWorth(playerId) {
+            const player = this.getPlayer(playerId);
+            if (!player || player.bankrupt) return 0;
+            return player.cash + this.getTotalPropertyValue(playerId);
         }
 
-        payJailBail(playerId) {
+        _checkInstantWin(playerId) {
+            const player = this.getPlayer(playerId);
+            if (!player || player.bankrupt) return false;
+
+            let reason = null;
+            let label = '';
+            if (this.getResortCount(playerId) >= 4) {
+                reason = 'RESORT_MONOPOLY';
+                label = 'Độc chiếm toàn bộ 4 Bãi Biển (Resort Monopoly)!';
+            } else if (this.getMonopolyCount(playerId) >= 3) {
+                reason = 'TRIPLE_MONOPOLY';
+                label = 'Sở hữu 3 Bộ Màu Độc Quyền (Triple Monopoly)!';
+            } else if (this.hasLineMonopoly(playerId)) {
+                reason = 'LINE_MONOPOLY';
+                label = 'Sở hữu trọn vẹn 1 Cạnh bàn cờ (Line Monopoly)!';
+            }
+
+            if (!reason) return false;
+
+            this.state.winnerId = playerId;
+            this.state.winReason = reason;
+            this.state.phase = 'GAME_OVER';
+            this.state.canRollAgain = false;
+            this.state.pendingTile = null;
+            this.state.pendingRepurchase = null;
+            this.state.pendingCard = null;
+            this.state.pendingChanceTarget = null;
+            this._addLog(`🏆 ${player.name} CHIẾN THẮNG NGAY LẬP TỨC: ${label}`, 'win');
+            this._emitEvent('game_over', {
+                winnerId: playerId,
+                winReason: reason,
+                message: `🏆 ${player.name}: ${label}`
+            });
+            return true;
+        }
+
+        // ==================== TURN ADVANCEMENT ====================
+
+        _finishCurrentStepOrAdvanceTurn() {
+            if (this.state.phase === 'GAME_OVER') return;
+            this.state.pendingTile = null;
+            this.state.pendingCard = null;
+            this.state.pendingChanceTarget = null;
+            this.state.pendingRepurchase = null;
+
+            const current = this.getCurrentPlayer();
+            if (current && !current.bankrupt && this.state.canRollAgain && !current.inIsland && !current.readyToFly) {
+                this.state.phase = 'ROLL';
+                return;
+            }
+            this._advanceToNextPlayer();
+        }
+
+        _advanceToNextPlayer() {
+            if (this.state.phase === 'GAME_OVER') return;
+            this.state.doublesCount = 0;
+            this.state.canRollAgain = false;
+            this.state.wasDouble = false;
+
+            const n = this.state.players.length;
+            for (let step = 1; step <= n; step++) {
+                const idx = (this.state.currentPlayerIndex + step) % n;
+                if (!this.state.players[idx].bankrupt) {
+                    this.state.currentPlayerIndex = idx;
+                    this.state.turnNumber += 1;
+                    break;
+                }
+            }
+
+            const nextPlayer = this.getCurrentPlayer();
+            if (!nextPlayer) return;
+
+            // Tick down outageTurns on properties owned by the starting player
+            for (const prop of Object.values(this.state.properties)) {
+                if (prop.ownerId === nextPlayer.id && prop.outageTurns > 0) {
+                    prop.outageTurns -= 1;
+                }
+            }
+
+            if (nextPlayer.readyToFly && !nextPlayer.inIsland) {
+                this.state.phase = 'WORLD_TOUR_PICK';
+                this._addLog(`✈️ ${nextPlayer.name} có thể chọn bay tới ô bất kỳ (phí ${formatShortMoney(this.state.config.worldTourCost)}).`, 'system');
+            } else {
+                this.state.phase = 'ROLL';
+                this._addLog(`Tới lượt của ${nextPlayer.name}.`, 'system');
+            }
+        }
+
+        _sendToIsland(player) {
+            player.position = 8;
+            player.inIsland = true;
+            player.islandTurns = 0;
+            player.readyToFly = false;
+            this.state.doublesCount = 0;
+            this.state.canRollAgain = false;
+            this.state.wasDouble = false;
+        }
+
+        // ==================== LOST ISLAND ACTIONS ====================
+
+        payIslandBail(playerId) {
             const current = this.getCurrentPlayer();
             if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
-            if (this.state.phase !== 'ROLL') return this._fail('Chỉ có thể nộp tiền bảo lãnh trước khi tung xúc xắc.');
-            if (!current.inJail) return this._fail('Bạn không ở trong tù.');
-            const bail = this.state.config.jailBail;
-            if (current.cash < bail) return this._fail('Không đủ tiền nộp bảo lãnh.');
+            if (this.state.phase !== 'ROLL') return this._fail('Chỉ có thể nộp phạt trước khi tung xúc xắc.');
+            if (!current.inIsland) return this._fail('Bạn không ở Đảo Hoang.');
+            const bail = this.state.config.islandBail;
+            if (current.cash < bail) return this._fail(`Không đủ ${formatMoney(bail)} để rời đảo.`);
 
             current.cash -= bail;
-            if (this.state.config.freeParkingJackpot) {
-                this.state.freeParkingPot += bail;
-            }
-            current.inJail = false;
-            current.jailTurns = 0;
-            this._addLog(`${current.name} nộp ${formatMoney(bail)} tiền bảo lãnh để ra tù.`, 'jail');
+            current.inIsland = false;
+            current.islandTurns = 0;
+            this._addLog(`${current.name} nộp ${formatMoney(bail)} rời khỏi Đảo Hoang!`, 'jail');
             return this._ok(this._emitEvent('bail', {
                 playerId,
                 cashDeltas: { [playerId]: -bail },
-                message: `${current.name} đã nộp ${formatMoney(bail)} ra tù`
+                message: `${current.name} nộp ${formatShortMoney(bail)} rời Đảo Hoang`
             }));
         }
 
-        useJailCard(playerId) {
+        useEscapeCard(playerId) {
             const current = this.getCurrentPlayer();
             if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
             if (this.state.phase !== 'ROLL') return this._fail('Chỉ có thể dùng thẻ trước khi tung xúc xắc.');
-            if (!current.inJail) return this._fail('Bạn không ở trong tù.');
-            if (current.jailCards <= 0) return this._fail('Bạn không có thẻ Miễn Tù.');
+            if (!current.inIsland) return this._fail('Bạn không ở Đảo Hoang.');
+            if (current.escapeCards <= 0) return this._fail('Bạn không có Thẻ Thoát Đảo.');
 
-            current.jailCards -= 1;
-            current.inJail = false;
-            current.jailTurns = 0;
-            this._addLog(`${current.name} sử dụng Thẻ Miễn Tù và được tự do!`, 'jail');
-            return this._ok(this._emitEvent('jail_card', {
+            current.escapeCards -= 1;
+            current.inIsland = false;
+            current.islandTurns = 0;
+            this._addLog(`${current.name} dùng Thẻ Thoát Đảo và tự do!`, 'jail');
+            return this._ok(this._emitEvent('escape_card', {
                 playerId,
-                message: `${current.name} dùng Thẻ Miễn Tù!`
+                message: `${current.name} dùng Thẻ Thoát Đảo!`
             }));
         }
+
+        // ==================== WORLD TOUR FLIGHT ====================
+
+        flyWorldTour(playerId, targetTileIndex) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'WORLD_TOUR_PICK') return this._fail('Bạn không ở trạng thái bay World Tour.');
+
+            const idx = Number(targetTileIndex);
+            const tile = BOARD_TILES[idx];
+            if (!tile || idx === 24) return this._fail('Vui lòng chọn điểm đến hợp lệ khác ô World Tour.');
+
+            const cost = this.state.config.worldTourCost;
+            if (current.cash < cost) return this._fail(`Bạn cần ${formatMoney(cost)} để mua vé máy bay.`);
+
+            const fromPos = current.position;
+            current.cash -= cost;
+            current.readyToFly = false;
+            current.position = idx;
+
+            const deltas = { [current.id]: -cost };
+            const passedStart = idx < 24; // clockwise from 24 past 0
+            if (passedStart) {
+                current.cash += this.state.config.startSalary;
+                deltas[current.id] += this.state.config.startSalary;
+                this._addLog(`✈️ ${current.name} bay qua START, nhận +${formatShortMoney(this.state.config.startSalary)}!`, 'cash');
+            }
+
+            this._addLog(`✈️ ${current.name} trả ${formatShortMoney(cost)} bay thẳng tới ${tile.name}!`, 'roll');
+            return this._resolveLanding(current, idx, {
+                playerId: current.id,
+                fromPos,
+                toPos: idx,
+                passedStart,
+                cashDeltas: deltas
+            });
+        }
+
+        cancelWorldTour(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'WORLD_TOUR_PICK') return this._fail('Không thể hủy lúc này.');
+
+            current.readyToFly = false;
+            this.state.phase = 'ROLL';
+            this._addLog(`${current.name} hủy chuyến bay để tung xúc xắc bình thường.`, 'info');
+            return this._ok(this._emitEvent('world_tour_cancel', {
+                playerId,
+                message: `${current.name} chọn tung xúc xắc`
+            }));
+        }
+
+        // ==================== DICE ROLLING ====================
 
         rollDice(playerId, forcedDice = null) {
             const current = this.getCurrentPlayer();
@@ -358,81 +486,76 @@
             const d1 = forcedDice ? forcedDice[0] : this._rollDie();
             const d2 = forcedDice ? forcedDice[1] : this._rollDie();
             const sum = d1 + d2;
-            const isDoubles = d1 === d2;
+            const isDouble = d1 === d2;
             this.state.dice = [d1, d2];
+            this.state.wasDouble = isDouble;
 
-            // Handle in-jail rolls
-            if (current.inJail) {
-                if (isDoubles) {
-                    current.inJail = false;
-                    current.jailTurns = 0;
+            if (current.inIsland) {
+                if (isDouble) {
+                    current.inIsland = false;
+                    current.islandTurns = 0;
                     this.state.doublesCount = 0;
                     this.state.canRollAgain = false;
-                    this._addLog(`${current.name} tung được đôi ${d1}-${d2} và thoát khỏi Nhà Tù!`, 'jail');
-                    return this._moveAndResolve(current, sum, { d1, d2 }, true);
+                    this._addLog(`${current.name} tung ĐÔI ${d1}-${d2} và thoát khỏi Đảo Hoang!`, 'jail');
+                    return this._moveAndResolve(current, sum, [d1, d2]);
                 }
 
-                current.jailTurns += 1;
-                if (current.jailTurns >= 3) {
-                    const bail = this.state.config.jailBail;
-                    this._addLog(`${current.name} đã hết 3 lượt trong tù (${d1}+${d2}), bắt buộc nộp ${formatMoney(bail)} để ra tù và đi ${sum} bước.`, 'jail');
-                    current.inJail = false;
-                    current.jailTurns = 0;
+                current.islandTurns += 1;
+                if (current.islandTurns >= 3) {
+                    const bail = this.state.config.islandBail;
+                    current.inIsland = false;
+                    current.islandTurns = 0;
                     this.state.doublesCount = 0;
                     this.state.canRollAgain = false;
-
-                    if (current.cash < bail) {
-                        // Move first, or demand bail via debt? Standard Monopoly: pay bail first, then move.
-                        // Set pending debt; once resolved, player ends turn or proceeds cleanly.
-                        // To keep flow linear: move after debt or resolve bail via debt then move.
-                        // Even cleaner: store moveSteps on pendingDebt? No, if cash < bail, resolve bail debt, then finish at END_TURN.
-                        this.state.pendingDebt = {
-                            debtorId: current.id,
-                            creditorId: null,
-                            amount: bail,
-                            reason: 'Tiền bảo lãnh bắt buộc sau 3 lượt ở tù',
-                            prevPhase: 'END_TURN',
-                            addToPot: Boolean(this.state.config.freeParkingJackpot)
-                        };
-                        this.state.phase = 'DEBT_RESOLUTION';
-                        return this._ok(this._emitEvent('debt', {
-                            playerId: current.id,
-                            dice: [d1, d2],
-                            message: `${current.name} thiếu tiền nộp bảo lãnh ${formatMoney(bail)}`
-                        }));
+                    if (current.cash >= bail) {
+                        current.cash -= bail;
+                        this._addLog(`${current.name} hết 3 lượt trên Đảo Hoang, nộp ${formatShortMoney(bail)} và đi ${sum} bước.`, 'jail');
+                        return this._moveAndResolve(current, sum, [d1, d2], { [current.id]: -bail });
                     }
-
-                    current.cash -= bail;
-                    if (this.state.config.freeParkingJackpot) {
-                        this.state.freeParkingPot += bail;
-                    }
-                    return this._moveAndResolve(current, sum, { d1, d2 }, true, { [current.id]: -bail });
+                    this._addLog(`${current.name} hết 3 lượt trên Đảo Hoang nhưng thiếu ${formatMoney(bail)}!`, 'warning');
+                    this.state.pendingDebt = {
+                        debtorId: current.id,
+                        creditorId: null,
+                        amount: bail,
+                        reason: 'Phí rời Đảo Hoang sau 3 lượt',
+                        nextActionAfterPaid: { type: 'ISLAND_FREED_MOVE', steps: sum }
+                    };
+                    this.state.phase = 'SELL_DEBT';
+                    return this._ok(this._emitEvent('debt', {
+                        playerId: current.id,
+                        dice: [d1, d2],
+                        message: `${current.name} cần bán đất để nộp ${formatShortMoney(bail)}`
+                    }));
                 }
 
                 this.state.canRollAgain = false;
-                this.state.doublesCount = 0;
-                this.state.phase = 'END_TURN';
-                this._addLog(`${current.name} tung ${d1}+${d2} trong tù (lần ${current.jailTurns}/3), chưa ra tù.`, 'jail');
-                return this._ok(this._emitEvent('roll_jail_stay', {
+                this._addLog(`${current.name} tung ${d1}+${d2}, vẫn kẹt trên Đảo Hoang (${current.islandTurns}/3).`, 'jail');
+                const evt = this._emitEvent('island_stay', {
                     playerId: current.id,
                     dice: [d1, d2],
-                    message: `${current.name} tung ${d1}+${d2}, vẫn ở trong tù (${current.jailTurns}/3)`
-                }));
+                    message: `${current.name} tung ${d1}+${d2}, kẹt trên Đảo (${current.islandTurns}/3)`
+                });
+                this._advanceToNextPlayer();
+                return this._ok(evt);
             }
 
             // Normal roll
-            if (isDoubles) {
+            if (isDouble) {
                 this.state.doublesCount += 1;
                 if (this.state.doublesCount >= 3) {
-                    this._sendToJail(current);
-                    this.state.phase = 'END_TURN';
-                    this._addLog(`${current.name} tung đôi lần thứ 3 liên tiếp (${d1}-${d2})! Bị đưa thẳng vào Nhà Tù.`, 'jail');
-                    return this._ok(this._emitEvent('go_to_jail', {
+                    const fromPos = current.position;
+                    this._sendToIsland(current);
+                    this._addLog(`DOUBLE x3! ${current.name} tung 3 lần đôi liên tiếp (${d1}-${d2}) -> Ra Đảo Hoang!`, 'jail');
+                    const evt = this._emitEvent('go_to_island', {
                         playerId: current.id,
+                        fromPos,
+                        toPos: 8,
                         dice: [d1, d2],
-                        toPos: 10,
-                        message: `${current.name} tung 3 lần đôi liên tiếp -> Vào Tù!`
-                    }));
+                        isDouble: true,
+                        message: `DOUBLE ×3! ${current.name} ra Đảo Hoang!`
+                    });
+                    this._advanceToNextPlayer();
+                    return this._ok(evt);
                 }
                 this.state.canRollAgain = true;
             } else {
@@ -440,68 +563,53 @@
                 this.state.canRollAgain = false;
             }
 
-            this._addLog(`${current.name} tung được ${d1} + ${d2} = ${sum}${isDoubles ? ' (Đôi - được đi thêm!)' : ''}.`, 'roll');
-            return this._moveAndResolve(current, sum, { d1, d2 }, false);
+            this._addLog(`${current.name} tung ${d1} + ${d2} = ${sum}${isDouble ? ' (DOUBLE — đi thêm lượt!)' : ''}.`, 'roll');
+            return this._moveAndResolve(current, sum, [d1, d2]);
         }
 
-        _moveAndResolve(player, steps, diceObj, fromJailExit = false, initialCashDeltas = {}) {
+        _moveAndResolve(player, steps, diceArr, initialCashDeltas = {}) {
             const fromPos = player.position;
             const rawTarget = fromPos + steps;
-            const passedGo = rawTarget >= 40;
-            const toPos = rawTarget % 40;
+            const passedStart = rawTarget >= 32;
+            const toPos = rawTarget % 32;
             const cashDeltas = Object.assign({}, initialCashDeltas);
 
             player.position = toPos;
-            if (passedGo) {
-                const salary = this.state.config.goSalary;
+            if (passedStart) {
+                const salary = this.state.config.startSalary;
                 player.cash += salary;
                 cashDeltas[player.id] = (cashDeltas[player.id] || 0) + salary;
-                this._addLog(`${player.name} đi qua Khởi Hành, nhận ${formatMoney(salary)}.`, 'cash');
+                this._addLog(`${player.name} qua START, nhận +${formatShortMoney(salary)}!`, 'cash');
             }
 
-            const eventBase = {
+            return this._resolveLanding(player, toPos, {
                 playerId: player.id,
                 fromPos,
                 toPos,
-                dice: [diceObj.d1, diceObj.d2],
-                passedGo,
-                fromJailExit,
+                dice: diceArr,
+                isDouble: this.state.wasDouble,
+                passedStart,
                 cashDeltas
-            };
-
-            return this._resolveLanding(player, toPos, diceObj.d1 + diceObj.d2, eventBase);
+            });
         }
 
-        _sendToJail(player) {
-            player.position = 10;
-            player.inJail = true;
-            player.jailTurns = 0;
-            this.state.doublesCount = 0;
-            this.state.canRollAgain = false;
-        }
+        // ==================== LANDING RESOLUTION ====================
 
-        _nextPhaseAfterResolution() {
-            return this.state.canRollAgain ? 'ROLL' : 'END_TURN';
-        }
-
-        _chargeOrEnterDebt(debtor, creditorId, amount, reason, addToPot = false, eventExtra = {}) {
+        _chargeOrSellDebt(debtor, creditorId, amount, reason, nextActionAfterPaid, eventExtra = {}) {
             if (debtor.cash >= amount) {
                 debtor.cash -= amount;
                 const deltas = Object.assign({}, eventExtra.cashDeltas || {});
                 deltas[debtor.id] = (deltas[debtor.id] || 0) - amount;
                 if (creditorId) {
                     const creditor = this.getPlayer(creditorId);
-                    if (creditor) {
+                    if (creditor && !creditor.bankrupt) {
                         creditor.cash += amount;
                         deltas[creditor.id] = (deltas[creditor.id] || 0) + amount;
                     }
-                } else if (addToPot) {
-                    this.state.freeParkingPot += amount;
                 }
-                this.state.phase = this._nextPhaseAfterResolution();
-                return this._ok(this._emitEvent(eventExtra.type || 'pay', Object.assign({}, eventExtra, {
-                    cashDeltas: deltas
-                })));
+                const evt = this._emitEvent(eventExtra.type || 'pay', Object.assign({}, eventExtra, { cashDeltas: deltas }));
+                this._executeNextActionAfterPaid(debtor, nextActionAfterPaid);
+                return this._ok(evt);
             }
 
             this.state.pendingDebt = {
@@ -509,915 +617,906 @@
                 creditorId,
                 amount,
                 reason,
-                prevPhase: this._nextPhaseAfterResolution(),
-                addToPot: Boolean(addToPot)
+                nextActionAfterPaid
             };
-            this.state.phase = 'DEBT_RESOLUTION';
-            this._addLog(`${debtor.name} chưa đủ ${formatMoney(amount)} (${reason}). Cần thế chấp hoặc bán nhà!`, 'warning');
+            this.state.phase = 'SELL_DEBT';
+            this._addLog(`${debtor.name} thiếu tiền trả ${formatShortMoney(amount)} (${reason}) — cần bán đất!`, 'warning');
             return this._ok(this._emitEvent('debt', Object.assign({}, eventExtra, {
                 debtAmount: amount,
-                message: `${debtor.name} cần xoay ${formatMoney(amount)} để trả nợ`
+                message: `${debtor.name} thiếu tiền (${formatShortMoney(amount)})!`
             })));
         }
 
-        _resolveLanding(player, tileIndex, diceSum, eventBase = {}, rentMultiplierOverride = null) {
+        _executeNextActionAfterPaid(player, nextAction) {
+            if (this.state.phase === 'GAME_OVER') return;
+            if (!nextAction) {
+                this._finishCurrentStepOrAdvanceTurn();
+                return;
+            }
+
+            if (nextAction.type === 'ISLAND_FREED_MOVE') {
+                this._moveAndResolve(player, nextAction.steps, this.state.dice);
+                return;
+            }
+
+            if (nextAction.type === 'CHECK_REPURCHASE') {
+                const tileIndex = nextAction.tileIndex;
+                const tile = BOARD_TILES[tileIndex];
+                const prop = this.state.properties[tileIndex];
+                const repCost = this.getRepurchaseCost(tileIndex);
+                if (tile && tile.type === 'city' && prop && prop.ownerId && prop.ownerId !== player.id && prop.level < 4 && player.cash >= repCost) {
+                    this.state.pendingRepurchase = {
+                        tileIndex,
+                        cost: repCost,
+                        prevOwnerId: prop.ownerId
+                    };
+                    this.state.phase = 'REPURCHASE_DECISION';
+                    return;
+                }
+            }
+
+            this._finishCurrentStepOrAdvanceTurn();
+        }
+
+        _resolveLanding(player, tileIndex, eventBase = {}) {
             const tile = BOARD_TILES[tileIndex];
             const prop = this.state.properties[tileIndex];
 
-            if (tile.type === 'go' || tile.type === 'jail') {
-                this.state.phase = this._nextPhaseAfterResolution();
-                const msg = tile.type === 'go'
-                    ? `${player.name} dừng tại ô Khởi Hành`
-                    : `${player.name} ghé thăm Nhà Tù`;
-                return this._ok(this._emitEvent('move', Object.assign({}, eventBase, { message: msg })));
+            if (tile.type === 'start') {
+                const evt = this._emitEvent('move', Object.assign({}, eventBase, { message: `${player.name} dừng tại START!` }));
+                this._finishCurrentStepOrAdvanceTurn();
+                return this._ok(evt);
             }
 
-            if (tile.type === 'free_parking') {
-                const deltas = Object.assign({}, eventBase.cashDeltas || {});
-                let msg = `${player.name} dừng tại Đỗ Xe Miễn Phí`;
-                if (this.state.config.freeParkingJackpot && this.state.freeParkingPot > 0) {
-                    const pot = this.state.freeParkingPot;
-                    player.cash += pot;
-                    this.state.freeParkingPot = 0;
-                    deltas[player.id] = (deltas[player.id] || 0) + pot;
-                    this._addLog(`${player.name} nhận toàn bộ Quỹ Đỗ Xe Miễn Phí: ${formatMoney(pot)}!`, 'cash');
-                    msg = `${player.name} trúng Quỹ Đỗ Xe ${formatMoney(pot)}!`;
+            if (tile.type === 'lost_island') {
+                this._sendToIsland(player);
+                this._addLog(`${player.name} dạt vào Đảo Hoang!`, 'jail');
+                const evt = this._emitEvent('go_to_island', Object.assign({}, eventBase, {
+                    toPos: 8,
+                    message: `${player.name} bị kẹt ở Đảo Hoang!`
+                }));
+                this._advanceToNextPlayer();
+                return this._ok(evt);
+            }
+
+            if (tile.type === 'world_tour') {
+                player.readyToFly = true;
+                this.state.canRollAgain = false;
+                this._addLog(`✈️ ${player.name} tới World Tour — sẵn sàng bay ở lượt kế tiếp!`, 'info');
+                const evt = this._emitEvent('world_tour_land', Object.assign({}, eventBase, {
+                    message: `${player.name} chuẩn bị bay World Tour!`
+                }));
+                this._advanceToNextPlayer();
+                return this._ok(evt);
+            }
+
+            if (tile.type === 'championship') {
+                const owned = this.getOwnedTileIndices(player.id);
+                if (owned.length > 0 && player.cash >= this.state.config.championshipCost) {
+                    this.state.phase = 'CHAMPIONSHIP_PICK';
+                    this._addLog(`🏆 ${player.name} vào World Championships! Chọn thành phố để nhân tiền thuê.`, 'cash');
+                    return this._ok(this._emitEvent('championship_pick', Object.assign({}, eventBase, {
+                        message: `${player.name} tổ chức Giải Vô Địch!`
+                    })));
                 }
-                this.state.phase = this._nextPhaseAfterResolution();
-                return this._ok(this._emitEvent('free_parking', Object.assign({}, eventBase, { cashDeltas: deltas, message: msg })));
-            }
-
-            if (tile.type === 'go_to_jail') {
-                this._sendToJail(player);
-                this.state.phase = 'END_TURN';
-                this._addLog(`${player.name} đi vào ô Vào Tù và bị giam giữ!`, 'jail');
-                return this._ok(this._emitEvent('go_to_jail', Object.assign({}, eventBase, {
-                    toPos: 10,
-                    message: `${player.name} vào Nhà Tù!`
-                })));
+                this._addLog(`${player.name} ghé World Championships nhưng chưa đủ điều kiện tổ chức.`, 'info');
+                const evt = this._emitEvent('move', Object.assign({}, eventBase, { message: `${player.name} ghé Giải Vô Địch` }));
+                this._finishCurrentStepOrAdvanceTurn();
+                return this._ok(evt);
             }
 
             if (tile.type === 'tax') {
-                this._addLog(`${player.name} phải nộp ${tile.name}: ${formatMoney(tile.amount)}.`, 'tax');
-                return this._chargeOrEnterDebt(
+                const totalVal = this.getTotalPropertyValue(player.id);
+                const tax = Math.floor(totalVal * (tile.rate || 0.1));
+                if (tax <= 0) {
+                    this._addLog(`${player.name} vào ô Thuế nhưng chưa có bất động sản (0).`, 'info');
+                    const evt = this._emitEvent('tax_free', Object.assign({}, eventBase, { message: `${player.name} không có đất để đóng thuế` }));
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
+                }
+                this._addLog(`${player.name} phải nộp Thuế 10%: ${formatShortMoney(tax)}.`, 'tax');
+                return this._chargeOrSellDebt(
                     player,
                     null,
-                    tile.amount,
-                    tile.name,
-                    this.state.config.freeParkingJackpot,
+                    tax,
+                    'Thuế tài sản 10%',
+                    null,
                     Object.assign({}, eventBase, {
                         type: 'tax',
-                        message: `${player.name} nộp ${tile.name} ${formatMoney(tile.amount)}`
+                        message: `${player.name} nộp Thuế ${formatShortMoney(tax)}`
                     })
                 );
             }
 
-            if (tile.type === 'chance' || tile.type === 'chest') {
-                const deckKey = tile.type === 'chance' ? 'chanceDeck' : 'chestDeck';
-                const sourceList = tile.type === 'chance' ? CHANCE_CARDS : CHEST_CARDS;
-                if (this.state[deckKey].length === 0) {
-                    this.state[deckKey] = shuffle(sourceList.map((_, i) => i), this.rng);
+            if (tile.type === 'chance') {
+                if (this.state.chanceDeck.length === 0) {
+                    this.state.chanceDeck = shuffle(CHANCE_CARDS.map((_, i) => i), this.rng);
                 }
-                const cardIdx = this.state[deckKey].shift();
-                const card = sourceList[cardIdx];
-                this.state.pendingCard = { deck: tile.type, card: clone(card) };
-                this.state.phase = 'CARD_MODAL';
-                this._addLog(`${player.name} rút thẻ ${tile.type === 'chance' ? 'Cơ Hội' : 'Khí Vận'}: "${card.title}".`, 'card');
-                return this._ok(this._emitEvent('draw_card', Object.assign({}, eventBase, {
-                    deck: tile.type,
+                const cardIdx = this.state.chanceDeck.shift();
+                const card = CHANCE_CARDS[cardIdx];
+                this.state.pendingCard = clone(card);
+                this.state.phase = 'CHANCE_MODAL';
+                this._addLog(`${player.name} rút thẻ Cơ Hội: "${card.title}".`, 'card');
+                return this._ok(this._emitEvent('draw_chance', Object.assign({}, eventBase, {
                     card,
-                    message: `${player.name} rút thẻ: ${card.title}`
+                    message: `${player.name}: ${card.title}`
                 })));
             }
 
-            // Property / Station / Utility
+            // City or Resort
             if (prop) {
                 if (!prop.ownerId) {
-                    this.state.pendingTile = tileIndex;
-                    this.state.phase = 'BUY_DECISION';
-                    return this._ok(this._emitEvent('land_unowned', Object.assign({}, eventBase, {
-                        tileIndex,
-                        message: `${player.name} dừng tại ${tile.name} (${formatMoney(tile.price)})`
-                    })));
+                    if (player.cash >= tile.price) {
+                        this.state.pendingTile = tileIndex;
+                        this.state.phase = 'BUY_DECISION';
+                        return this._ok(this._emitEvent('land_unowned', Object.assign({}, eventBase, {
+                            tileIndex,
+                            message: `${player.name} dừng tại ${tile.name} (${formatShortMoney(tile.price)})`
+                        })));
+                    }
+                    this._addLog(`${player.name} dừng tại ${tile.name} nhưng không đủ ${formatShortMoney(tile.price)}.`, 'info');
+                    const evt = this._emitEvent('move', Object.assign({}, eventBase, { message: `${player.name} thiếu tiền mua ${tile.name}` }));
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
                 }
 
                 if (prop.ownerId === player.id) {
-                    this.state.phase = this._nextPhaseAfterResolution();
-                    return this._ok(this._emitEvent('land_own', Object.assign({}, eventBase, {
-                        message: `${player.name} thăm lại đất nhà: ${tile.name}`
-                    })));
+                    if (tile.type === 'city' && prop.level < 4) {
+                        const minNextCost = this.getUpgradeCost(tileIndex, prop.level + 1);
+                        if (player.cash >= minNextCost) {
+                            this.state.pendingTile = tileIndex;
+                            this.state.phase = 'UPGRADE_DECISION';
+                            return this._ok(this._emitEvent('land_own_upgrade', Object.assign({}, eventBase, {
+                                tileIndex,
+                                message: `${player.name} có thể nâng cấp ${tile.name}!`
+                            })));
+                        }
+                    }
+                    const evt = this._emitEvent('land_own', Object.assign({}, eventBase, { message: `${player.name} thăm ${tile.name}` }));
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
                 }
 
+                // Opponent-owned property
                 const owner = this.getPlayer(prop.ownerId);
-                if (prop.mortgaged) {
-                    this.state.phase = this._nextPhaseAfterResolution();
-                    this._addLog(`${player.name} vào ${tile.name} (đang thế chấp — miễn tiền thuê).`, 'info');
-                    return this._ok(this._emitEvent('land_mortgaged', Object.assign({}, eventBase, {
-                        message: `${tile.name} đang thế chấp — miễn phí`
-                    })));
+                if (prop.outageTurns > 0) {
+                    this._addLog(`${player.name} vào ${tile.name} đang Cúp Điện — miễn phí thuê!`, 'info');
+                    const evt = this._emitEvent('land_outage', Object.assign({}, eventBase, { message: `${tile.name} cúp điện — 0₫` }));
+                    this._executeNextActionAfterPaid(player, { type: 'CHECK_REPURCHASE', tileIndex });
+                    return this._ok(evt);
                 }
 
-                const rent = this.calculateRent(tileIndex, diceSum, rentMultiplierOverride);
-                this._addLog(`${player.name} trả ${formatMoney(rent)} tiền thuê ${tile.name} cho ${owner.name}.`, 'rent');
-                return this._chargeOrEnterDebt(
+                const rent = this.calculateRent(tileIndex);
+                this._addLog(`${player.name} trả ${formatShortMoney(rent)} tiền thuê ${tile.name} cho ${owner.name}.`, 'rent');
+                return this._chargeOrSellDebt(
                     player,
                     owner.id,
                     rent,
-                    `Tiền thuê ${tile.name} trả cho ${owner.name}`,
-                    false,
+                    `Tiền thuê ${tile.name} trả ${owner.name}`,
+                    { type: 'CHECK_REPURCHASE', tileIndex },
                     Object.assign({}, eventBase, {
                         type: 'rent',
                         ownerId: owner.id,
                         rent,
-                        message: `${player.name} trả ${owner.name} ${formatMoney(rent)}`
+                        message: `${player.name} trả ${owner.name} ${formatShortMoney(rent)}`
                     })
                 );
             }
 
-            this.state.phase = this._nextPhaseAfterResolution();
+            this._finishCurrentStepOrAdvanceTurn();
             return this._ok(this._emitEvent('move', eventBase));
         }
 
-        confirmCard(playerId) {
+        // ==================== BUY / UPGRADE / REPURCHASE / CHAMPIONSHIP ====================
+
+        buyCity(playerId, targetLevel = 0) {
             const current = this.getCurrentPlayer();
             if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
-            if (this.state.phase !== 'CARD_MODAL' || !this.state.pendingCard) {
-                return this._fail('Không có thẻ nào cần xác nhận.');
+            if (this.state.phase !== 'BUY_DECISION' || this.state.pendingTile === null) {
+                return this._fail('Không có thành phố đang chờ mua.');
+            }
+            const tileIndex = this.state.pendingTile;
+            const tile = BOARD_TILES[tileIndex];
+            const prop = this.state.properties[tileIndex];
+            if (!tile || !prop || prop.ownerId) return this._fail('Ô này đã có chủ.');
+
+            const level = tile.type === 'resort' ? 0 : Math.min(Math.max(0, Number(targetLevel) || 0), 3);
+            const cost = this.getPurchaseCost(tileIndex, level);
+            if (current.cash < cost) return this._fail('Bạn không đủ tiền.');
+
+            current.cash -= cost;
+            prop.ownerId = current.id;
+            prop.level = level;
+
+            const lvlText = tile.type === 'resort' ? 'Khu nghỉ dưỡng' : (level === 0 ? 'Đất' : `Đất + ${level} Nhà`);
+            this._addLog(`${current.name} mua ${tile.name} (${lvlText}) với giá ${formatShortMoney(cost)}.`, 'buy');
+            const evt = this._emitEvent('buy', {
+                playerId: current.id,
+                tileIndex,
+                level,
+                cashDeltas: { [current.id]: -cost },
+                message: `${current.name} mua ${tile.name}!`
+            });
+
+            if (!this._checkInstantWin(current.id)) {
+                this._finishCurrentStepOrAdvanceTurn();
+            }
+            return this._ok(evt);
+        }
+
+        skipBuy(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'BUY_DECISION') return this._fail('Không trong bước mua.');
+            const tile = BOARD_TILES[this.state.pendingTile];
+            this._addLog(`${current.name} bỏ qua mua ${tile?.name || ''}.`, 'info');
+            const evt = this._emitEvent('skip_buy', { playerId, message: `${current.name} bỏ qua ${tile?.name || ''}` });
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok(evt);
+        }
+
+        upgradeCity(playerId, targetLevel) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'UPGRADE_DECISION' || this.state.pendingTile === null) {
+                return this._fail('Không có thành phố đang chờ nâng cấp.');
+            }
+            const tileIndex = this.state.pendingTile;
+            const tile = BOARD_TILES[tileIndex];
+            const prop = this.state.properties[tileIndex];
+            if (!tile || tile.type !== 'city' || !prop || prop.ownerId !== current.id) {
+                return this._fail('Thành phố không hợp lệ.');
             }
 
-            const { deck, card } = this.state.pendingCard;
+            const target = Number(targetLevel);
+            if (prop.level === 3 && target !== 4) {
+                return this._fail('Thành phố đã có 3 Nhà, chỉ có thể nâng lên Khách sạn.');
+            }
+            if (prop.level < 3 && (target <= prop.level || target > 3)) {
+                return this._fail('Mức nâng cấp không hợp lệ.');
+            }
+
+            const cost = this.getUpgradeCost(tileIndex, target);
+            if (current.cash < cost) return this._fail('Bạn không đủ tiền nâng cấp.');
+
+            current.cash -= cost;
+            prop.level = target;
+            const label = target === 4 ? 'KHÁCH SẠN 🏨' : `Nhà ${target}`;
+            this._addLog(`${current.name} nâng cấp ${tile.name} lên ${label} (-${formatShortMoney(cost)}).`, 'build');
+            const evt = this._emitEvent('upgrade', {
+                playerId: current.id,
+                tileIndex,
+                level: target,
+                cashDeltas: { [current.id]: -cost },
+                message: `${current.name} xây ${label} ở ${tile.name}!`
+            });
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok(evt);
+        }
+
+        skipUpgrade(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'UPGRADE_DECISION') return this._fail('Không trong bước nâng cấp.');
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok();
+        }
+
+        repurchaseCity(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'REPURCHASE_DECISION' || !this.state.pendingRepurchase) {
+                return this._fail('Không có thành phố để mua lại.');
+            }
+            const { tileIndex, cost, prevOwnerId } = this.state.pendingRepurchase;
+            const tile = BOARD_TILES[tileIndex];
+            const prop = this.state.properties[tileIndex];
+            const prevOwner = this.getPlayer(prevOwnerId);
+            if (!prop || prop.ownerId !== prevOwnerId || prop.level >= 4 || tile.type !== 'city') {
+                return this._fail('Không thể mua lại thành phố này.');
+            }
+            if (current.cash < cost) return this._fail('Bạn không đủ tiền mua lại.');
+
+            current.cash -= cost;
+            if (prevOwner && !prevOwner.bankrupt) prevOwner.cash += cost;
+            prop.ownerId = current.id;
+            prop.shielded = false;
+            this.state.pendingRepurchase = null;
+
+            this._addLog(`💰 ${current.name} MUA LẠI ${tile.name} từ ${prevOwner?.name || ''} với giá ${formatShortMoney(cost)}!`, 'buy');
+            const evt = this._emitEvent('repurchase', {
+                playerId: current.id,
+                tileIndex,
+                cashDeltas: { [current.id]: -cost, ...(prevOwner ? { [prevOwner.id]: cost } : {}) },
+                message: `${current.name} mua lại ${tile.name}!`
+            });
+
+            if (this._checkInstantWin(current.id)) {
+                return this._ok(evt);
+            }
+
+            if (prop.level < 4 && current.cash >= this.getUpgradeCost(tileIndex, prop.level + 1)) {
+                this.state.pendingTile = tileIndex;
+                this.state.phase = 'UPGRADE_DECISION';
+                return this._ok(evt);
+            }
+
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok(evt);
+        }
+
+        skipRepurchase(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'REPURCHASE_DECISION') return this._fail('Không trong bước mua lại.');
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok();
+        }
+
+        holdChampionship(playerId, tileIndex) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'CHAMPIONSHIP_PICK') return this._fail('Không trong bước Giải Vô Địch.');
+            const idx = Number(tileIndex);
+            const prop = this.state.properties[idx];
+            const tile = BOARD_TILES[idx];
+            if (!prop || prop.ownerId !== current.id) return this._fail('Bạn phải chọn thành phố hoặc khu nghỉ dưỡng của mình.');
+
+            const cost = this.state.config.championshipCost;
+            if (current.cash < cost) return this._fail(`Không đủ ${formatMoney(cost)}.`);
+
+            current.cash -= cost;
+            this.state.championshipTile = idx;
+            this.state.championshipMult = Math.min(5, (this.state.championshipMult || 1) + 1);
+
+            this._addLog(`🏆 ${current.name} tổ chức Giải Vô Địch tại ${tile.name} (Tiền thuê ×${this.state.championshipMult})!`, 'cash');
+            const evt = this._emitEvent('championship_hold', {
+                playerId: current.id,
+                tileIndex: idx,
+                mult: this.state.championshipMult,
+                cashDeltas: { [current.id]: -cost },
+                message: `🏆 ${tile.name} nhận Giải Vô Địch ×${this.state.championshipMult}!`
+            });
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok(evt);
+        }
+
+        skipChampionship(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'CHAMPIONSHIP_PICK') return this._fail('Không trong bước Giải Vô Địch.');
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok();
+        }
+
+        // ==================== CHANCE CARDS ====================
+
+        confirmChance(playerId) {
+            const current = this.getCurrentPlayer();
+            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
+            if (this.state.phase !== 'CHANCE_MODAL' || !this.state.pendingCard) {
+                return this._fail('Không có thẻ Cơ Hội đang chờ.');
+            }
+
+            const card = this.state.pendingCard;
             this.state.pendingCard = null;
             const fromPos = current.position;
 
             switch (card.action) {
-                case 'collect': {
+                case 'escape_card': {
+                    current.escapeCards += 1;
+                    this._addLog(`${current.name} nhận 1 Thẻ Thoát Đảo!`, 'card');
+                    const evt = this._emitEvent('chance_resolved', { playerId: current.id, message: `${current.name} nhận Thẻ Thoát Đảo` });
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
+                }
+
+                case 'jackpot': {
                     current.cash += card.amount;
-                    this.state.phase = this._nextPhaseAfterResolution();
-                    this._addLog(`${current.name} nhận ${formatMoney(card.amount)} từ thẻ "${card.title}".`, 'cash');
-                    return this._ok(this._emitEvent('card_resolved', {
+                    this._addLog(`${current.name} trúng số nhận +${formatShortMoney(card.amount)}!`, 'cash');
+                    const evt = this._emitEvent('chance_resolved', {
                         playerId: current.id,
                         cashDeltas: { [current.id]: card.amount },
-                        message: `${current.name} +${formatMoney(card.amount)}`
-                    }));
+                        message: `${current.name} +${formatShortMoney(card.amount)}!`
+                    });
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
                 }
 
-                case 'pay': {
-                    this._addLog(`${current.name} phải trả ${formatMoney(card.amount)} (${card.title}).`, 'tax');
-                    return this._chargeOrEnterDebt(
-                        current,
-                        null,
-                        card.amount,
-                        card.title,
-                        this.state.config.freeParkingJackpot,
-                        { type: 'card_pay', playerId: current.id, message: `${current.name} -${formatMoney(card.amount)}` }
-                    );
-                }
-
-                case 'go_to_jail': {
-                    this._sendToJail(current);
-                    this.state.phase = 'END_TURN';
-                    this._addLog(`${current.name} bị đưa vào Nhà Tù theo thẻ "${card.title}"!`, 'jail');
-                    return this._ok(this._emitEvent('go_to_jail', {
-                        playerId: current.id,
-                        fromPos,
-                        toPos: 10,
-                        message: `${current.name} vào Nhà Tù!`
-                    }));
-                }
-
-                case 'jail_free_card': {
-                    current.jailCards += 1;
-                    this.state.phase = this._nextPhaseAfterResolution();
-                    this._addLog(`${current.name} nhận được 1 Thẻ Miễn Tù!`, 'card');
-                    return this._ok(this._emitEvent('card_resolved', {
-                        playerId: current.id,
-                        message: `${current.name} nhận Thẻ Miễn Tù!`
-                    }));
-                }
-
-                case 'move_to': {
-                    const target = card.target;
-                    const steps = (target - fromPos + 40) % 40;
-                    const diceSum = this.state.dice[0] + this.state.dice[1];
-                    if (steps === 0 && target === 0) {
-                        // Already on GO, award GO bonus explicitly
-                        current.cash += this.state.config.goSalary;
-                        this.state.phase = this._nextPhaseAfterResolution();
-                        return this._ok(this._emitEvent('card_resolved', {
-                            playerId: current.id,
-                            cashDeltas: { [current.id]: this.state.config.goSalary },
-                            message: `${current.name} +${formatMoney(this.state.config.goSalary)}`
-                        }));
-                    }
-                    const passedGo = target < fromPos;
-                    current.position = target;
+                case 'birthday': {
+                    const others = this.getActivePlayers().filter(p => p.id !== current.id);
+                    let sum = 0;
                     const deltas = {};
-                    if (passedGo) {
-                        current.cash += this.state.config.goSalary;
-                        deltas[current.id] = this.state.config.goSalary;
-                        this._addLog(`${current.name} đi qua Khởi Hành, nhận ${formatMoney(this.state.config.goSalary)}.`, 'cash');
+                    for (const o of others) {
+                        const paid = Math.min(o.cash, card.amount);
+                        o.cash -= paid;
+                        sum += paid;
+                        if (paid > 0) deltas[o.id] = -paid;
                     }
-                    return this._resolveLanding(current, target, diceSum, {
+                    current.cash += sum;
+                    deltas[current.id] = sum;
+                    this._addLog(`🎂 Mọi người chúc mừng sinh nhật ${current.name} (+${formatShortMoney(sum)})!`, 'cash');
+                    const evt = this._emitEvent('chance_resolved', {
+                        playerId: current.id,
+                        cashDeltas: deltas,
+                        message: `${current.name} +${formatShortMoney(sum)} quà sinh nhật!`
+                    });
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
+                }
+
+                case 'tax_audit': {
+                    const amt = Math.max(100000, Math.floor(this.getTotalPropertyValue(current.id) * 0.1));
+                    this._addLog(`${current.name} bị kiểm tra thuế: ${formatShortMoney(amt)}.`, 'tax');
+                    return this._chargeOrSellDebt(current, null, amt, 'Kiểm tra thuế đặc biệt', null, {
+                        type: 'tax',
+                        playerId: current.id,
+                        message: `${current.name} nộp ${formatShortMoney(amt)}`
+                    });
+                }
+
+                case 'go_lost_island': {
+                    this._sendToIsland(current);
+                    this._addLog(`${current.name} bị thẻ Cơ Hội đưa ra Đảo Hoang!`, 'jail');
+                    const evt = this._emitEvent('go_to_island', {
                         playerId: current.id,
                         fromPos,
-                        toPos: target,
-                        passedGo,
+                        toPos: 8,
+                        message: `${current.name} ra Đảo Hoang!`
+                    });
+                    this._advanceToNextPlayer();
+                    return this._ok(evt);
+                }
+
+                case 'go_start': {
+                    current.position = 0;
+                    const sal = this.state.config.startSalary;
+                    current.cash += sal;
+                    this._addLog(`${current.name} tiến thẳng về START, nhận +${formatShortMoney(sal)}!`, 'cash');
+                    const evt = this._emitEvent('chance_resolved', {
+                        playerId: current.id,
+                        fromPos,
+                        toPos: 0,
+                        cashDeltas: { [current.id]: sal },
+                        message: `${current.name} về START (+${formatShortMoney(sal)})`
+                    });
+                    this._finishCurrentStepOrAdvanceTurn();
+                    return this._ok(evt);
+                }
+
+                case 'go_world_tour': {
+                    const passed = 24 < fromPos;
+                    current.position = 24;
+                    const deltas = {};
+                    if (passed) {
+                        current.cash += this.state.config.startSalary;
+                        deltas[current.id] = this.state.config.startSalary;
+                    }
+                    return this._resolveLanding(current, 24, {
+                        playerId: current.id,
+                        fromPos,
+                        toPos: 24,
+                        passedStart: passed,
                         cashDeltas: deltas
                     });
                 }
 
-                case 'move_back': {
-                    const target = (fromPos - card.steps + 40) % 40;
-                    current.position = target;
-                    const diceSum = this.state.dice[0] + this.state.dice[1];
-                    this._addLog(`${current.name} lùi ${card.steps} ô về ${BOARD_TILES[target].name}.`, 'card');
-                    return this._resolveLanding(current, target, diceSum, {
+                case 'go_championship': {
+                    const passed = 16 < fromPos;
+                    current.position = 16;
+                    const deltas = {};
+                    if (passed) {
+                        current.cash += this.state.config.startSalary;
+                        deltas[current.id] = this.state.config.startSalary;
+                    }
+                    return this._resolveLanding(current, 16, {
                         playerId: current.id,
                         fromPos,
-                        toPos: target
+                        toPos: 16,
+                        passedStart: passed,
+                        cashDeltas: deltas
                     });
                 }
 
-                case 'nearest_station': {
-                    let best = STATION_TILES.find(s => s > fromPos);
-                    let passedGo = false;
-                    if (best === undefined) {
-                        best = STATION_TILES[0];
-                        passedGo = true;
+                case 'earthquake': {
+                    const validOppTiles = Object.keys(this.state.properties).map(Number).filter(idx => {
+                        const tile = BOARD_TILES[idx];
+                        const prop = this.state.properties[idx];
+                        return tile.type === 'city' && prop.ownerId && prop.ownerId !== current.id && prop.level < 4;
+                    });
+                    if (validOppTiles.length === 0) {
+                        this._addLog('Động Đất không tìm thấy thành phố mục tiêu phù hợp.', 'info');
+                        this._finishCurrentStepOrAdvanceTurn();
+                        return this._ok();
                     }
-                    current.position = best;
-                    const deltas = {};
-                    if (passedGo) {
-                        current.cash += this.state.config.goSalary;
-                        deltas[current.id] = this.state.config.goSalary;
-                        this._addLog(`${current.name} đi qua Khởi Hành, nhận ${formatMoney(this.state.config.goSalary)}.`, 'cash');
+                    this.state.pendingChanceTarget = { action: 'earthquake', validOppTiles };
+                    this.state.phase = 'CHANCE_TARGET_PICK';
+                    return this._ok(this._emitEvent('chance_target', { playerId: current.id, message: 'Chọn thành phố đối thủ để phá hủy!' }));
+                }
+
+                case 'power_outage': {
+                    const validOppTiles = Object.keys(this.state.properties).map(Number).filter(idx => {
+                        const prop = this.state.properties[idx];
+                        return prop.ownerId && prop.ownerId !== current.id && prop.outageTurns === 0;
+                    });
+                    if (validOppTiles.length === 0) {
+                        this._addLog('Cúp Điện không tìm thấy ô mục tiêu phù hợp.', 'info');
+                        this._finishCurrentStepOrAdvanceTurn();
+                        return this._ok();
                     }
-                    this._addLog(`${current.name} tiến tới ${BOARD_TILES[best].name}.`, 'card');
-                    return this._resolveLanding(
-                        current,
-                        best,
-                        this.state.dice[0] + this.state.dice[1],
-                        { playerId: current.id, fromPos, toPos: best, passedGo, cashDeltas: deltas },
-                        card.multiplier || 2
+                    this.state.pendingChanceTarget = { action: 'power_outage', validOppTiles };
+                    this.state.phase = 'CHANCE_TARGET_PICK';
+                    return this._ok(this._emitEvent('chance_target', { playerId: current.id, message: 'Chọn bất động sản đối thủ để cắt điện!' }));
+                }
+
+                case 'shield': {
+                    const validOwnTiles = this.getOwnedTileIndices(current.id).filter(idx => !this.state.properties[idx].shielded);
+                    if (validOwnTiles.length === 0) {
+                        this._addLog(`${current.name} chưa có thành phố chưa gắn Khiên.`, 'info');
+                        this._finishCurrentStepOrAdvanceTurn();
+                        return this._ok();
+                    }
+                    this.state.pendingChanceTarget = { action: 'shield', validOwnTiles };
+                    this.state.phase = 'CHANCE_TARGET_PICK';
+                    return this._ok(this._emitEvent('chance_target', { playerId: current.id, message: 'Chọn thành phố của bạn để đặt Khiên!' }));
+                }
+
+                case 'festival': {
+                    const validOwnTiles = this.getOwnedTileIndices(current.id).filter(idx =>
+                        BOARD_TILES[idx].type === 'city' && !this.state.properties[idx].festival
                     );
+                    if (validOwnTiles.length === 0) {
+                        this._addLog(`${current.name} không có thành phố mới để tổ chức Lễ Hội.`, 'info');
+                        this._finishCurrentStepOrAdvanceTurn();
+                        return this._ok();
+                    }
+                    this.state.pendingChanceTarget = { action: 'festival', validOwnTiles };
+                    this.state.phase = 'CHANCE_TARGET_PICK';
+                    return this._ok(this._emitEvent('chance_target', { playerId: current.id, message: 'Chọn thành phố để tổ chức Lễ Hội ×2!' }));
                 }
 
-                case 'nearest_utility': {
-                    let best = UTILITY_TILES.find(u => u > fromPos);
-                    let passedGo = false;
-                    if (best === undefined) {
-                        best = UTILITY_TILES[0];
-                        passedGo = true;
+                case 'royal_gift': {
+                    const validOwnTiles = this.getOwnedTileIndices(current.id).filter(idx => BOARD_TILES[idx].type === 'city');
+                    const validRecipients = this.getActivePlayers().filter(p => p.id !== current.id).map(p => p.id);
+                    if (validOwnTiles.length === 0 || validRecipients.length === 0) {
+                        this._addLog(`${current.name} không có thành phố để tặng Quà Hoàng Gia.`, 'info');
+                        this._finishCurrentStepOrAdvanceTurn();
+                        return this._ok();
                     }
-                    current.position = best;
-                    const deltas = {};
-                    if (passedGo) {
-                        current.cash += this.state.config.goSalary;
-                        deltas[current.id] = this.state.config.goSalary;
-                        this._addLog(`${current.name} đi qua Khởi Hành, nhận ${formatMoney(this.state.config.goSalary)}.`, 'cash');
-                    }
-                    const prop = this.state.properties[best];
-                    let specialDice = this.state.dice[0] + this.state.dice[1];
-                    if (prop && prop.ownerId && prop.ownerId !== current.id && !prop.mortgaged) {
-                        const d1 = this._rollDie();
-                        const d2 = this._rollDie();
-                        this.state.dice = [d1, d2];
-                        specialDice = d1 + d2;
-                        this._addLog(`${current.name} tung xúc xắc đặc biệt cho ${BOARD_TILES[best].name}: ${d1}+${d2}=${specialDice}.`, 'card');
-                    }
-                    return this._resolveLanding(
-                        current,
-                        best,
-                        specialDice,
-                        { playerId: current.id, fromPos, toPos: best, passedGo, cashDeltas: deltas },
-                        card.multiplier || 10
+                    this.state.pendingChanceTarget = { action: 'royal_gift', validOwnTiles, validRecipients };
+                    this.state.phase = 'CHANCE_TARGET_PICK';
+                    return this._ok(this._emitEvent('chance_target', { playerId: current.id, message: 'Chọn thành phố của bạn để tặng đối thủ!' }));
+                }
+
+                case 'city_swap': {
+                    const validOwnTiles = this.getOwnedTileIndices(current.id).filter(idx =>
+                        BOARD_TILES[idx].type === 'city' && this.state.properties[idx].level < 4
                     );
-                }
-
-                case 'repairs': {
-                    let houseCount = 0;
-                    let hotelCount = 0;
-                    for (const idx of this.getOwnedTileIndices(current.id)) {
-                        const h = this.state.properties[idx].houses || 0;
-                        if (h === 5) hotelCount += 1;
-                        else houseCount += h;
+                    const validOppTiles = Object.keys(this.state.properties).map(Number).filter(idx => {
+                        const prop = this.state.properties[idx];
+                        return BOARD_TILES[idx].type === 'city' && prop.ownerId && prop.ownerId !== current.id && prop.level < 4;
+                    });
+                    if (validOwnTiles.length === 0 || validOppTiles.length === 0) {
+                        this._addLog('Không đủ thành phố hợp lệ hai bên để hoán đổi.', 'info');
+                        this._finishCurrentStepOrAdvanceTurn();
+                        return this._ok();
                     }
-                    const total = houseCount * card.perHouse + hotelCount * card.perHotel;
-                    if (total === 0) {
-                        this.state.phase = this._nextPhaseAfterResolution();
-                        this._addLog(`${current.name} chưa có nhà/khách sạn nên không mất phí tu sửa.`, 'card');
-                        return this._ok(this._emitEvent('card_resolved', {
-                            playerId: current.id,
-                            message: `${current.name} không có nhà để sửa (0k)`
-                        }));
-                    }
-                    this._addLog(`${current.name} đóng phí tu sửa (${houseCount} nhà, ${hotelCount} khách sạn): ${formatMoney(total)}.`, 'tax');
-                    return this._chargeOrEnterDebt(
-                        current,
-                        null,
-                        total,
-                        card.title,
-                        this.state.config.freeParkingJackpot,
-                        { type: 'card_pay', playerId: current.id, message: `${current.name} -${formatMoney(total)}` }
-                    );
-                }
-
-                case 'collect_all': {
-                    const others = this.getActivePlayers().filter(p => p.id !== current.id);
-                    let totalCollected = 0;
-                    const deltas = {};
-                    for (const other of others) {
-                        const paid = Math.min(other.cash, card.amount);
-                        other.cash -= paid;
-                        totalCollected += paid;
-                        if (paid > 0) deltas[other.id] = -paid;
-                    }
-                    current.cash += totalCollected;
-                    deltas[current.id] = totalCollected;
-                    this.state.phase = this._nextPhaseAfterResolution();
-                    this._addLog(`${current.name} nhận tổng cộng ${formatMoney(totalCollected)} từ mọi người (${card.title}).`, 'cash');
-                    return this._ok(this._emitEvent('card_resolved', {
-                        playerId: current.id,
-                        cashDeltas: deltas,
-                        message: `${current.name} +${formatMoney(totalCollected)}`
-                    }));
-                }
-
-                case 'pay_all': {
-                    const others = this.getActivePlayers().filter(p => p.id !== current.id);
-                    const totalNeeded = others.length * card.amount;
-                    if (current.cash >= totalNeeded) {
-                        current.cash -= totalNeeded;
-                        const deltas = { [current.id]: -totalNeeded };
-                        for (const other of others) {
-                            other.cash += card.amount;
-                            deltas[other.id] = card.amount;
-                        }
-                        this.state.phase = this._nextPhaseAfterResolution();
-                        this._addLog(`${current.name} trả mỗi người ${formatMoney(card.amount)} (tổng ${formatMoney(totalNeeded)}).`, 'rent');
-                        return this._ok(this._emitEvent('card_resolved', {
-                            playerId: current.id,
-                            cashDeltas: deltas,
-                            message: `${current.name} chia ${formatMoney(totalNeeded)}`
-                        }));
-                    }
-                    this.state.pendingDebt = {
-                        debtorId: current.id,
-                        creditorId: null,
-                        multiCreditorIds: others.map(o => o.id),
-                        perCreditorAmount: card.amount,
-                        amount: totalNeeded,
-                        reason: card.title,
-                        prevPhase: this._nextPhaseAfterResolution(),
-                        addToPot: false
-                    };
-                    this.state.phase = 'DEBT_RESOLUTION';
-                    this._addLog(`${current.name} thiếu tiền chi trả ${formatMoney(totalNeeded)} cho mọi người!`, 'warning');
-                    return this._ok(this._emitEvent('debt', {
-                        playerId: current.id,
-                        deck,
-                        message: `${current.name} cần xoay ${formatMoney(totalNeeded)}`
-                    }));
+                    this.state.pendingChanceTarget = { action: 'city_swap', validOwnTiles, validOppTiles };
+                    this.state.phase = 'CHANCE_TARGET_PICK';
+                    return this._ok(this._emitEvent('chance_target', { playerId: current.id, message: 'Chọn cặp thành phố để hoán đổi!' }));
                 }
 
                 default: {
-                    this.state.phase = this._nextPhaseAfterResolution();
+                    this._finishCurrentStepOrAdvanceTurn();
                     return this._ok();
                 }
             }
         }
 
-        buyProperty(playerId) {
+        pickChanceTarget(playerId, payload = {}) {
             const current = this.getCurrentPlayer();
             if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
-            if (this.state.phase !== 'BUY_DECISION' || this.state.pendingTile === null) {
-                return this._fail('Không có lô đất đang chờ mua.');
+            if (this.state.phase !== 'CHANCE_TARGET_PICK' || !this.state.pendingChanceTarget) {
+                return this._fail('Không trong bước chọn mục tiêu Cơ Hội.');
             }
-            const tileIndex = this.state.pendingTile;
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            if (!tile || !prop || prop.ownerId) return this._fail('Ô đất này không thể mua.');
-            if (current.cash < tile.price) return this._fail('Bạn không đủ tiền mua lô đất này.');
 
-            current.cash -= tile.price;
-            prop.ownerId = current.id;
-            this.state.pendingTile = null;
-            this.state.phase = this._nextPhaseAfterResolution();
-            this._addLog(`${current.name} đã mua ${tile.name} với giá ${formatMoney(tile.price)}.`, 'buy');
-            return this._ok(this._emitEvent('buy', {
-                playerId: current.id,
-                tileIndex,
-                cashDeltas: { [current.id]: -tile.price },
-                message: `${current.name} mua ${tile.name}!`
-            }));
+            const tgt = this.state.pendingChanceTarget;
+            let evt = null;
+
+            switch (tgt.action) {
+                case 'earthquake': {
+                    const idx = Number(payload.tileIndex);
+                    if (!tgt.validOppTiles.includes(idx)) return this._fail('Thành phố không hợp lệ.');
+                    const prop = this.state.properties[idx];
+                    const tile = BOARD_TILES[idx];
+                    if (prop.shielded) {
+                        prop.shielded = false;
+                        this._addLog(`🛡️ Khiên Bảo Vệ tại ${tile.name} đã chặn đứng Động Đất!`, 'card');
+                        evt = this._emitEvent('shield_block', { tileIndex: idx, message: `🛡️ Khiên đã chặn Động Đất ở ${tile.name}!` });
+                    } else {
+                        prop.ownerId = null;
+                        prop.level = 0;
+                        prop.festival = false;
+                        prop.outageTurns = 0;
+                        if (this.state.championshipTile === idx) {
+                            this.state.championshipTile = null;
+                            this.state.championshipMult = 1;
+                        }
+                        this._addLog(`🌋 ĐỘNG ĐẤT san phẳng ${tile.name}! Đất trở về vô chủ.`, 'card');
+                        evt = this._emitEvent('earthquake', { tileIndex: idx, message: `🌋 Động Đất phá hủy ${tile.name}!` });
+                    }
+                    break;
+                }
+
+                case 'power_outage': {
+                    const idx = Number(payload.tileIndex);
+                    if (!tgt.validOppTiles.includes(idx)) return this._fail('Mục tiêu không hợp lệ.');
+                    const prop = this.state.properties[idx];
+                    const tile = BOARD_TILES[idx];
+                    if (prop.shielded) {
+                        prop.shielded = false;
+                        this._addLog(`🛡️ Khiên Bảo Vệ tại ${tile.name} đã chặn Cúp Điện!`, 'card');
+                        evt = this._emitEvent('shield_block', { tileIndex: idx, message: `🛡️ Khiên đã chặn Cúp Điện ở ${tile.name}!` });
+                    } else {
+                        prop.outageTurns = 2;
+                        this._addLog(`⚡ ${tile.name} bị CÚP ĐIỆN 2 vòng (tiền thuê = 0)!`, 'card');
+                        evt = this._emitEvent('power_outage', { tileIndex: idx, message: `⚡ ${tile.name} cúp điện 2 vòng!` });
+                    }
+                    break;
+                }
+
+                case 'shield': {
+                    const idx = Number(payload.tileIndex);
+                    if (!tgt.validOwnTiles.includes(idx)) return this._fail('Ô không hợp lệ.');
+                    this.state.properties[idx].shielded = true;
+                    const tile = BOARD_TILES[idx];
+                    this._addLog(`🛡️ ${current.name} đặt Khiên Bảo Vệ tại ${tile.name}.`, 'card');
+                    evt = this._emitEvent('shield_add', { tileIndex: idx, message: `🛡️ Đặt Khiên tại ${tile.name}!` });
+                    break;
+                }
+
+                case 'festival': {
+                    const idx = Number(payload.tileIndex);
+                    if (!tgt.validOwnTiles.includes(idx)) return this._fail('Thành phố không hợp lệ.');
+                    this.state.properties[idx].festival = true;
+                    const tile = BOARD_TILES[idx];
+                    this._addLog(`🎉 ${current.name} mở Lễ Hội ×2 tiền thuê tại ${tile.name}!`, 'cash');
+                    evt = this._emitEvent('festival_add', { tileIndex: idx, message: `🎉 Lễ Hội ×2 tại ${tile.name}!` });
+                    break;
+                }
+
+                case 'royal_gift': {
+                    const idx = Number(payload.ownTile ?? payload.tileIndex);
+                    const recId = payload.recipientId;
+                    if (!tgt.validOwnTiles.includes(idx) || !tgt.validRecipients.includes(recId)) {
+                        return this._fail('Vui lòng chọn thành phố và người nhận hợp lệ.');
+                    }
+                    const rec = this.getPlayer(recId);
+                    this.state.properties[idx].ownerId = recId;
+                    const tile = BOARD_TILES[idx];
+                    this._addLog(`🎁 ${current.name} tặng ${tile.name} cho ${rec.name} (Quà Hoàng Gia).`, 'card');
+                    evt = this._emitEvent('royal_gift', { tileIndex: idx, message: `🎁 ${current.name} tặng ${tile.name} cho ${rec.name}` });
+                    if (this._checkInstantWin(recId)) return this._ok(evt);
+                    break;
+                }
+
+                case 'city_swap': {
+                    const ownIdx = Number(payload.ownTile);
+                    const oppIdx = Number(payload.targetTile);
+                    if (!tgt.validOwnTiles.includes(ownIdx) || !tgt.validOppTiles.includes(oppIdx)) {
+                        return this._fail('Vui lòng chọn 1 thành phố của bạn và 1 thành phố của đối thủ.');
+                    }
+                    const oppProp = this.state.properties[oppIdx];
+                    const ownProp = this.state.properties[ownIdx];
+                    const oppTile = BOARD_TILES[oppIdx];
+                    const ownTile = BOARD_TILES[ownIdx];
+
+                    if (oppProp.shielded) {
+                        oppProp.shielded = false;
+                        this._addLog(`🛡️ Khiên Bảo Vệ tại ${oppTile.name} đã chặn Hoán Đổi Đất!`, 'card');
+                        evt = this._emitEvent('shield_block', { tileIndex: oppIdx, message: `🛡️ Khiên chặn Đổi Đất tại ${oppTile.name}!` });
+                    } else {
+                        const oppId = oppProp.ownerId;
+                        oppProp.ownerId = current.id;
+                        ownProp.ownerId = oppId;
+                        this._addLog(`🔄 ${current.name} hoán đổi ${ownTile.name} lấy ${oppTile.name}!`, 'card');
+                        evt = this._emitEvent('city_swap', { message: `🔄 Đổi ${ownTile.name} ⇄ ${oppTile.name}!` });
+                        if (this._checkInstantWin(current.id) || this._checkInstantWin(oppId)) {
+                            return this._ok(evt);
+                        }
+                    }
+                    break;
+                }
+
+                default:
+                    return this._fail('Loại thẻ không hợp lệ.');
+            }
+
+            this.state.pendingChanceTarget = null;
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok(evt);
         }
 
-        startAuction(playerId) {
+        skipChanceTarget(playerId) {
             const current = this.getCurrentPlayer();
             if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
-            if (this.state.phase !== 'BUY_DECISION' || this.state.pendingTile === null) {
-                return this._fail('Không có lô đất đang chờ đấu giá.');
-            }
-
-            const tileIndex = this.state.pendingTile;
-            const tile = BOARD_TILES[tileIndex];
-            this.state.pendingTile = null;
-
-            const activePlayers = this.state.players;
-            const participants = [];
-            for (let offset = 1; offset <= activePlayers.length; offset++) {
-                const p = activePlayers[(this.state.currentPlayerIndex + offset) % activePlayers.length];
-                if (!p.bankrupt) participants.push(p.id);
-            }
-
-            this.state.auction = {
-                tileIndex,
-                highestBid: 0,
-                highestBidderId: null,
-                participants,
-                activeIndex: 0,
-                passedIds: []
-            };
-            this.state.phase = 'AUCTION';
-            this._addLog(`${current.name} mở đấu giá ${tile.name} (giá gốc ${formatMoney(tile.price)})!`, 'auction');
-            return this._ok(this._emitEvent('auction_start', {
-                playerId: current.id,
-                tileIndex,
-                message: `Đấu giá ${tile.name}`
-            }));
+            if (this.state.phase !== 'CHANCE_TARGET_PICK') return this._fail('Không trong bước chọn Cơ Hội.');
+            this.state.pendingChanceTarget = null;
+            this._finishCurrentStepOrAdvanceTurn();
+            return this._ok();
         }
 
-        getAuctionActiveBidderId() {
-            const auc = this.state.auction;
-            if (!auc) return null;
-            return auc.participants[auc.activeIndex] || null;
+        // ==================== SELL DEBT & BANKRUPTCY ====================
+
+        sellPropertiesForDebt(playerId, tileIndices) {
+            if (this.state.phase !== 'SELL_DEBT' || !this.state.pendingDebt) {
+                return this._fail('Không ở trạng thái bán đất trả nợ.');
+            }
+            const debt = this.state.pendingDebt;
+            if (debt.debtorId !== playerId) return this._fail('Không phải khoản nợ của bạn.');
+            if (!Array.isArray(tileIndices) || tileIndices.length === 0) {
+                return this._fail('Hãy chọn ít nhất 1 thành phố để bán.');
+            }
+
+            const debtor = this.getPlayer(playerId);
+            const unique = [...new Set(tileIndices.map(Number))];
+            let gained = 0;
+
+            for (const idx of unique) {
+                const prop = this.state.properties[idx];
+                if (!prop || prop.ownerId !== playerId) continue;
+                const val = this.getSaleValue(idx);
+                gained += val;
+                prop.ownerId = null;
+                prop.level = 0;
+                prop.shielded = false;
+                prop.outageTurns = 0;
+                if (this.state.championshipTile === idx) {
+                    this.state.championshipTile = null;
+                    this.state.championshipMult = 1;
+                }
+                this._addLog(`${debtor.name} bán ${BOARD_TILES[idx].name} thu về ${formatShortMoney(val)}.`, 'cash');
+            }
+
+            debtor.cash += gained;
+            return this._settleDebtIfReady(debtor);
         }
 
-        _advanceAuctionTurn() {
-            const auc = this.state.auction;
-            const remaining = auc.participants.filter(id => !auc.passedIds.includes(id));
-            if (remaining.length === 0) {
-                const tile = BOARD_TILES[auc.tileIndex];
-                this.state.auction = null;
-                this.state.phase = this._nextPhaseAfterResolution();
-                this._addLog(`Không ai trả giá, ${tile.name} vẫn thuộc về ngân hàng.`, 'auction');
-                return this._ok(this._emitEvent('auction_end', {
-                    tileIndex: tile.index,
-                    winnerId: null,
-                    message: `Đấu giá ${tile.name} không có người mua`
+        autoSellForDebt(playerId) {
+            if (this.state.phase !== 'SELL_DEBT' || !this.state.pendingDebt) {
+                return this._fail('Không ở trạng thái bán đất trả nợ.');
+            }
+            const debt = this.state.pendingDebt;
+            if (debt.debtorId !== playerId) return this._fail('Không phải khoản nợ của bạn.');
+            const debtor = this.getPlayer(playerId);
+
+            const owned = this.getOwnedTileIndices(playerId).sort((a, b) => {
+                const ta = BOARD_TILES[a];
+                const tb = BOARD_TILES[b];
+                const ma = ta.group && this.ownsColorGroup(playerId, ta.group) ? 1 : 0;
+                const mb = tb.group && this.ownsColorGroup(playerId, tb.group) ? 1 : 0;
+                if (ma !== mb) return ma - mb;
+                return this.getSaleValue(a) - this.getSaleValue(b);
+            });
+
+            const toSell = [];
+            let projected = debtor.cash;
+            for (const idx of owned) {
+                if (projected >= debt.amount) break;
+                toSell.push(idx);
+                projected += this.getSaleValue(idx);
+            }
+
+            if (toSell.length === 0) {
+                return this.declareBankruptcy(playerId);
+            }
+            return this.sellPropertiesForDebt(playerId, toSell);
+        }
+
+        _settleDebtIfReady(debtor) {
+            const debt = this.state.pendingDebt;
+            if (!debt || debtor.cash < debt.amount) {
+                return this._ok(this._emitEvent('debt_partial', {
+                    playerId: debtor.id,
+                    message: `${debtor.name} vẫn còn thiếu ${formatShortMoney(debt.amount - debtor.cash)}`
                 }));
             }
 
-            if (remaining.length === 1 && auc.highestBidderId === remaining[0]) {
-                return this._finalizeAuctionWinner();
-            }
-
-            const n = auc.participants.length;
-            for (let step = 1; step <= n; step++) {
-                const nextIdx = (auc.activeIndex + step) % n;
-                if (!auc.passedIds.includes(auc.participants[nextIdx])) {
-                    auc.activeIndex = nextIdx;
-                    break;
-                }
-            }
-            return this._ok(this._emitEvent('auction_turn', {
-                tileIndex: auc.tileIndex,
-                bidderId: this.getAuctionActiveBidderId(),
-                highestBid: auc.highestBid
-            }));
-        }
-
-        _finalizeAuctionWinner() {
-            const auc = this.state.auction;
-            const winner = this.getPlayer(auc.highestBidderId);
-            const tile = BOARD_TILES[auc.tileIndex];
-            const prop = this.state.properties[auc.tileIndex];
-            const price = auc.highestBid;
-
-            winner.cash -= price;
-            prop.ownerId = winner.id;
-            this.state.auction = null;
-            this.state.phase = this._nextPhaseAfterResolution();
-            this._addLog(`${winner.name} thắng đấu giá ${tile.name} với giá ${formatMoney(price)}!`, 'auction');
-            return this._ok(this._emitEvent('auction_end', {
-                tileIndex: tile.index,
-                winnerId: winner.id,
-                price,
-                cashDeltas: { [winner.id]: -price },
-                message: `${winner.name} thắng đấu giá ${tile.name} (${formatMoney(price)})`
-            }));
-        }
-
-        placeAuctionBid(playerId, amount) {
-            if (this.state.phase !== 'AUCTION' || !this.state.auction) {
-                return this._fail('Không trong phiên đấu giá.');
-            }
-            const auc = this.state.auction;
-            if (this.getAuctionActiveBidderId() !== playerId) {
-                return this._fail('Chưa tới lượt bạn trả giá.');
-            }
-            const bidder = this.getPlayer(playerId);
-            const bid = Math.floor(Number(amount));
-            if (!Number.isFinite(bid) || bid <= auc.highestBid) {
-                return this._fail(`Giá đấu phải cao hơn ${formatMoney(auc.highestBid)}.`);
-            }
-            if (bid > bidder.cash) {
-                return this._fail('Bạn không đủ tiền mặt để đặt mức giá này.');
-            }
-
-            auc.highestBid = bid;
-            auc.highestBidderId = playerId;
-            this._addLog(`${bidder.name} trả giá ${formatMoney(bid)} cho ${BOARD_TILES[auc.tileIndex].name}.`, 'auction');
-
-            const remaining = auc.participants.filter(id => !auc.passedIds.includes(id));
-            if (remaining.length === 1) {
-                return this._finalizeAuctionWinner();
-            }
-            return this._advanceAuctionTurn();
-        }
-
-        passAuction(playerId) {
-            if (this.state.phase !== 'AUCTION' || !this.state.auction) {
-                return this._fail('Không trong phiên đấu giá.');
-            }
-            const auc = this.state.auction;
-            if (this.getAuctionActiveBidderId() !== playerId) {
-                return this._fail('Chưa tới lượt bạn.');
-            }
-            const player = this.getPlayer(playerId);
-            if (!auc.passedIds.includes(playerId)) {
-                auc.passedIds.push(playerId);
-            }
-            this._addLog(`${player.name} bỏ qua lượt đấu giá.`, 'auction');
-            return this._advanceAuctionTurn();
-        }
-
-        buildHouse(playerId, tileIndex) {
-            if (!this._isManagementAllowed(playerId)) {
-                return this._fail('Không thể xây nhà trong pha hiện tại.');
-            }
-            if (!this.canBuildOn(playerId, tileIndex)) {
-                return this._fail('Chưa đủ điều kiện xây nhà (cần sở hữu đủ bộ màu, không thế chấp, và xây đều).');
-            }
-            const player = this.getPlayer(playerId);
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-
-            player.cash -= tile.houseCost;
-            prop.houses += 1;
-            const label = prop.houses === 5 ? 'Khách Sạn' : `Nhà cấp ${prop.houses}`;
-            this._addLog(`${player.name} xây ${label} tại ${tile.name} (-${formatMoney(tile.houseCost)}).`, 'build');
-            return this._ok(this._emitEvent('build', {
-                playerId,
-                tileIndex,
-                houses: prop.houses,
-                cashDeltas: { [playerId]: -tile.houseCost },
-                message: `${player.name} xây ${label} ở ${tile.name}`
-            }));
-        }
-
-        sellHouse(playerId, tileIndex) {
-            if (!this._isManagementAllowed(playerId)) {
-                return this._fail('Không thể bán nhà lúc này.');
-            }
-            if (!this.canSellOn(playerId, tileIndex)) {
-                return this._fail('Phải bán nhà đều từ lô nhiều nhà nhất.');
-            }
-            const player = this.getPlayer(playerId);
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            const refund = Math.floor(tile.houseCost / 2);
-
-            prop.houses -= 1;
-            player.cash += refund;
-            this._addLog(`${player.name} bán 1 nhà tại ${tile.name}, thu về ${formatMoney(refund)}.`, 'cash');
-            const evt = this._emitEvent('sell_house', {
-                playerId,
-                tileIndex,
-                cashDeltas: { [playerId]: refund },
-                message: `${player.name} bán nhà ở ${tile.name} (+${formatMoney(refund)})`
-            });
-            this.resolveDebtIfPaid(playerId);
-            return this._ok(evt);
-        }
-
-        mortgageProperty(playerId, tileIndex) {
-            if (!this._isManagementAllowed(playerId)) {
-                return this._fail('Không thể thế chấp lúc này.');
-            }
-            if (!this.canMortgage(playerId, tileIndex)) {
-                return this._fail('Không thể thế chấp lô đất này (cần bán hết nhà trong cùng bộ màu trước).');
-            }
-            const player = this.getPlayer(playerId);
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            const value = Math.floor(tile.price / 2);
-
-            prop.mortgaged = true;
-            player.cash += value;
-            this._addLog(`${player.name} thế chấp ${tile.name}, nhận ${formatMoney(value)}.`, 'cash');
-            const evt = this._emitEvent('mortgage', {
-                playerId,
-                tileIndex,
-                cashDeltas: { [playerId]: value },
-                message: `${player.name} thế chấp ${tile.name} (+${formatMoney(value)})`
-            });
-            this.resolveDebtIfPaid(playerId);
-            return this._ok(evt);
-        }
-
-        unmortgageProperty(playerId, tileIndex) {
-            if (!this._isManagementAllowed(playerId)) {
-                return this._fail('Không thể chuộc đất lúc này.');
-            }
-            if (!this.canUnmortgage(playerId, tileIndex)) {
-                return this._fail('Không đủ tiền chuộc hoặc lô đất chưa thế chấp.');
-            }
-            const player = this.getPlayer(playerId);
-            const tile = BOARD_TILES[tileIndex];
-            const prop = this.state.properties[tileIndex];
-            const cost = this.getUnmortgageCost(tileIndex);
-
-            player.cash -= cost;
-            prop.mortgaged = false;
-            this._addLog(`${player.name} chuộc lại ${tile.name} với giá ${formatMoney(cost)}.`, 'buy');
-            return this._ok(this._emitEvent('unmortgage', {
-                playerId,
-                tileIndex,
-                cashDeltas: { [playerId]: -cost },
-                message: `${player.name} chuộc ${tile.name}`
-            }));
-        }
-
-        resolveDebtIfPaid(playerId) {
-            if (this.state.phase !== 'DEBT_RESOLUTION' || !this.state.pendingDebt) {
-                return false;
-            }
-            const debt = this.state.pendingDebt;
-            if (debt.debtorId !== playerId) return false;
-            const debtor = this.getPlayer(playerId);
-            if (!debtor || debtor.cash < debt.amount) return false;
-
             debtor.cash -= debt.amount;
             const deltas = { [debtor.id]: -debt.amount };
-
-            if (debt.multiCreditorIds && debt.multiCreditorIds.length > 0) {
-                for (const cid of debt.multiCreditorIds) {
-                    const c = this.getPlayer(cid);
-                    if (c && !c.bankrupt) {
-                        c.cash += debt.perCreditorAmount;
-                        deltas[c.id] = debt.perCreditorAmount;
-                    }
-                }
-            } else if (debt.creditorId) {
+            if (debt.creditorId) {
                 const creditor = this.getPlayer(debt.creditorId);
                 if (creditor && !creditor.bankrupt) {
                     creditor.cash += debt.amount;
                     deltas[creditor.id] = debt.amount;
                 }
-            } else if (debt.addToPot) {
-                this.state.freeParkingPot += debt.amount;
             }
 
+            const nextAction = debt.nextActionAfterPaid;
             this.state.pendingDebt = null;
-            this.state.phase = debt.prevPhase || this._nextPhaseAfterResolution();
-            this._addLog(`${debtor.name} đã thanh toán đủ khoản nợ ${formatMoney(debt.amount)}!`, 'cash');
-            this._emitEvent('debt_paid', {
+            this._addLog(`${debtor.name} đã trả đủ ${formatShortMoney(debt.amount)}!`, 'cash');
+            const evt = this._emitEvent('debt_paid', {
                 playerId: debtor.id,
                 cashDeltas: deltas,
-                message: `${debtor.name} đã trả nợ ${formatMoney(debt.amount)}`
+                message: `${debtor.name} đã thanh toán nợ!`
             });
-            return true;
+            this._executeNextActionAfterPaid(debtor, nextAction);
+            return this._ok(evt);
         }
 
         declareBankruptcy(playerId) {
-            if (this.state.phase !== 'DEBT_RESOLUTION' || !this.state.pendingDebt) {
+            if (this.state.phase !== 'SELL_DEBT' || !this.state.pendingDebt) {
                 return this._fail('Không ở trạng thái giải quyết nợ.');
             }
             const debt = this.state.pendingDebt;
-            if (debt.debtorId !== playerId) {
-                return this._fail('Không phải khoản nợ của bạn.');
-            }
+            if (debt.debtorId !== playerId) return this._fail('Không phải khoản nợ của bạn.');
+
             const debtor = this.getPlayer(playerId);
             const creditor = debt.creditorId ? this.getPlayer(debt.creditorId) : null;
 
-            // Liquidate all houses first
-            let houseCash = 0;
+            const remainingCash = debtor.cash + this.getLiquidationValue(debtor.id);
+            if (creditor && !creditor.bankrupt && remainingCash > 0) {
+                creditor.cash += remainingCash;
+            }
+
             for (const idx of this.getOwnedTileIndices(debtor.id)) {
-                const tile = BOARD_TILES[idx];
                 const prop = this.state.properties[idx];
-                if (tile.type === 'property' && prop.houses > 0) {
-                    houseCash += prop.houses * Math.floor(tile.houseCost / 2);
-                    prop.houses = 0;
+                prop.ownerId = null;
+                prop.level = 0;
+                prop.shielded = false;
+                prop.outageTurns = 0;
+                if (this.state.championshipTile === idx) {
+                    this.state.championshipTile = null;
+                    this.state.championshipMult = 1;
                 }
             }
-            const totalCash = debtor.cash + houseCash;
+
             debtor.cash = 0;
-
-            if (creditor && !creditor.bankrupt) {
-                creditor.cash += totalCash;
-                creditor.jailCards += debtor.jailCards;
-                for (const idx of this.getOwnedTileIndices(debtor.id)) {
-                    this.state.properties[idx].ownerId = creditor.id;
-                }
-                this._addLog(`${debtor.name} tuyên bố PHÁ SẢN! Toàn bộ tài sản được chuyển cho ${creditor.name}.`, 'bankrupt');
-            } else {
-                if (debt.multiCreditorIds && debt.multiCreditorIds.length > 0 && totalCash > 0) {
-                    const share = Math.floor(totalCash / debt.multiCreditorIds.length);
-                    for (const cid of debt.multiCreditorIds) {
-                        const c = this.getPlayer(cid);
-                        if (c && !c.bankrupt) c.cash += share;
-                    }
-                }
-                for (const idx of this.getOwnedTileIndices(debtor.id)) {
-                    const prop = this.state.properties[idx];
-                    prop.ownerId = null;
-                    prop.houses = 0;
-                    prop.mortgaged = false;
-                }
-                this._addLog(`${debtor.name} tuyên bố PHÁ SẢN! Đất đai được trả về ngân hàng.`, 'bankrupt');
-            }
-
-            debtor.jailCards = 0;
             debtor.bankrupt = true;
-            debtor.inJail = false;
+            debtor.inIsland = false;
+            debtor.readyToFly = false;
+            debtor.escapeCards = 0;
             this.state.pendingDebt = null;
             this.state.canRollAgain = false;
             this.state.doublesCount = 0;
+            this._addLog(`💥 ${debtor.name} PHÁ SẢN! Toàn bộ tài sản bị thu hồi.`, 'bankrupt');
 
             const survivors = this.getActivePlayers();
             if (survivors.length <= 1) {
-                this.state.winnerId = survivors[0] ? survivors[0].id : null;
+                const win = survivors[0] || null;
+                this.state.winnerId = win ? win.id : null;
+                this.state.winReason = 'BANKRUPTCY';
                 this.state.phase = 'GAME_OVER';
-                if (survivors[0]) {
-                    this._addLog(`CHÚC MỪNG ${survivors[0].name} trở thành TỶ PHÚ DUY NHẤT và giành chiến thắng!`, 'win');
-                }
+                if (win) this._addLog(`🏆 ${win.name} CHIẾN THẮNG — TẤT CẢ ĐỐI THỦ PHÁ SẢN!`, 'win');
                 return this._ok(this._emitEvent('game_over', {
                     winnerId: this.state.winnerId,
-                    bankruptId: debtor.id,
-                    message: `${survivors[0]?.name || ''} chiến thắng!`
+                    winReason: 'BANKRUPTCY',
+                    message: `🏆 ${win?.name || ''} chiến thắng!`
                 }));
             }
 
-            // Advance turn cleanly to next surviving player
-            this._advanceTurnIndex();
-            this.state.phase = 'ROLL';
-            const nextPlayer = this.getCurrentPlayer();
-            this._addLog(`Lượt tiếp theo thuộc về ${nextPlayer.name}.`, 'system');
-            return this._ok(this._emitEvent('bankrupt', {
+            const evt = this._emitEvent('bankrupt', {
                 bankruptId: debtor.id,
-                nextPlayerId: nextPlayer.id,
-                message: `${debtor.name} đã phá sản!`
-            }));
+                message: `${debtor.name} đã PHÁ SẢN!`
+            });
+            this._advanceToNextPlayer();
+            return this._ok(evt);
         }
 
-        proposeTrade(playerId, payload) {
-            const current = this.getCurrentPlayer();
-            if (!current || current.id !== playerId) return this._fail('Chỉ người đang tới lượt mới được đề nghị giao dịch.');
-            if (this.state.phase !== 'ROLL' && this.state.phase !== 'END_TURN') {
-                return this._fail('Không thể mở giao dịch trong pha hiện tại.');
-            }
-            const target = this.getPlayer(payload.toId);
-            if (!target || target.bankrupt || target.id === playerId) {
-                return this._fail('Đối tác giao dịch không hợp lệ.');
-            }
-
-            const offerCash = Math.max(0, Math.floor(Number(payload.offerCash) || 0));
-            const requestCash = Math.max(0, Math.floor(Number(payload.requestCash) || 0));
-            const offerJailCards = Math.max(0, Math.floor(Number(payload.offerJailCards) || 0));
-            const requestJailCards = Math.max(0, Math.floor(Number(payload.requestJailCards) || 0));
-            const offerProps = Array.isArray(payload.offerProps) ? [...new Set(payload.offerProps.map(Number))] : [];
-            const requestProps = Array.isArray(payload.requestProps) ? [...new Set(payload.requestProps.map(Number))] : [];
-
-            const hasAnything = offerCash > 0 || requestCash > 0 || offerJailCards > 0 || requestJailCards > 0 || offerProps.length > 0 || requestProps.length > 0;
-            if (!hasAnything) return this._fail('Giao dịch phải có ít nhất một tài sản hoặc tiền mặt.');
-
-            if (current.cash < offerCash || current.jailCards < offerJailCards) {
-                return this._fail('Bạn không có đủ tiền mặt hoặc thẻ Miễn Tù để đề nghị.');
-            }
-            if (target.cash < requestCash || target.jailCards < requestJailCards) {
-                return this._fail(`${target.name} không đủ tiền mặt hoặc thẻ Miễn Tù.`);
-            }
-
-            for (const idx of offerProps) {
-                const prop = this.state.properties[idx];
-                const tile = BOARD_TILES[idx];
-                if (!prop || prop.ownerId !== current.id) return this._fail(`Bạn không sở hữu ${tile?.name || idx}.`);
-                if (tile.type === 'property' && this.groupHasHouses(tile.group)) {
-                    return this._fail(`Phải bán hết nhà trong bộ màu của ${tile.name} trước khi giao dịch.`);
-                }
-            }
-
-            for (const idx of requestProps) {
-                const prop = this.state.properties[idx];
-                const tile = BOARD_TILES[idx];
-                if (!prop || prop.ownerId !== target.id) return this._fail(`${target.name} không sở hữu ${tile?.name || idx}.`);
-                if (tile.type === 'property' && this.groupHasHouses(tile.group)) {
-                    return this._fail(`Phải bán hết nhà trong bộ màu của ${tile.name} trước khi giao dịch.`);
-                }
-            }
-
-            this.state.trade = {
-                fromId: current.id,
-                toId: target.id,
-                offerCash,
-                offerProps,
-                offerJailCards,
-                requestCash,
-                requestProps,
-                requestJailCards,
-                returnPhase: this.state.phase
-            };
-            this.state.phase = 'TRADE_OFFER';
-            this._addLog(`${current.name} gửi đề nghị giao dịch tới ${target.name}.`, 'trade');
-            return this._ok(this._emitEvent('trade_offer', {
-                fromId: current.id,
-                toId: target.id,
-                message: `${current.name} mời ${target.name} giao dịch`
-            }));
-        }
-
-        acceptTrade(playerId) {
-            if (this.state.phase !== 'TRADE_OFFER' || !this.state.trade) {
-                return this._fail('Không có giao dịch nào đang chờ.');
-            }
-            const t = this.state.trade;
-            if (t.toId !== playerId) return this._fail('Chỉ người nhận đề nghị mới có thể chấp nhận.');
-
-            const from = this.getPlayer(t.fromId);
-            const to = this.getPlayer(t.toId);
-            if (!from || !to || from.cash < t.offerCash || to.cash < t.requestCash) {
-                this.state.trade = null;
-                this.state.phase = t.returnPhase;
-                return this._fail('Giao dịch không còn hợp lệ do thiếu tiền.');
-            }
-
-            from.cash = from.cash - t.offerCash + t.requestCash;
-            to.cash = to.cash - t.requestCash + t.offerCash;
-            from.jailCards = from.jailCards - t.offerJailCards + t.requestJailCards;
-            to.jailCards = to.jailCards - t.requestJailCards + t.offerJailCards;
-
-            for (const idx of t.offerProps) {
-                this.state.properties[idx].ownerId = to.id;
-            }
-            for (const idx of t.requestProps) {
-                this.state.properties[idx].ownerId = from.id;
-            }
-
-            this.state.trade = null;
-            this.state.phase = t.returnPhase;
-            this._addLog(`${to.name} ĐỒNG Ý giao dịch với ${from.name}!`, 'trade');
-            return this._ok(this._emitEvent('trade_accepted', {
-                fromId: from.id,
-                toId: to.id,
-                message: `${to.name} chấp nhận giao dịch!`
-            }));
-        }
-
-        rejectTrade(playerId) {
-            if (this.state.phase !== 'TRADE_OFFER' || !this.state.trade) {
-                return this._fail('Không có giao dịch nào đang chờ.');
-            }
-            const t = this.state.trade;
-            if (t.toId !== playerId && t.fromId !== playerId) {
-                return this._fail('Bạn không liên quan tới giao dịch này.');
-            }
-            const actor = this.getPlayer(playerId);
-            this.state.trade = null;
-            this.state.phase = t.returnPhase;
-            this._addLog(`${actor.name} đã từ chối/hủy giao dịch.`, 'trade');
-            return this._ok(this._emitEvent('trade_rejected', {
-                playerId,
-                message: `${actor.name} từ chối giao dịch`
-            }));
-        }
-
-        _advanceTurnIndex() {
-            const n = this.state.players.length;
-            for (let step = 1; step <= n; step++) {
-                const idx = (this.state.currentPlayerIndex + step) % n;
-                if (!this.state.players[idx].bankrupt) {
-                    this.state.currentPlayerIndex = idx;
-                    this.state.turnNumber += 1;
-                    break;
-                }
-            }
-        }
-
-        endTurn(playerId) {
-            const current = this.getCurrentPlayer();
-            if (!current || current.id !== playerId) return this._fail('Không phải lượt của bạn.');
-            if (this.state.phase !== 'END_TURN') return this._fail('Chưa thể kết thúc lượt ngay bây giờ.');
-
-            this.state.doublesCount = 0;
+        endByTimer() {
+            if (!this.state || this.state.phase === 'GAME_OVER') return this._fail('Trận đã kết thúc.');
+            const ranked = this.getActivePlayers().sort((a, b) => this.getNetWorth(b.id) - this.getNetWorth(a.id));
+            const win = ranked[0] || null;
+            this.state.remainingSeconds = 0;
+            this.state.winnerId = win ? win.id : null;
+            this.state.winReason = 'TIME_UP';
+            this.state.phase = 'GAME_OVER';
             this.state.canRollAgain = false;
-            this._advanceTurnIndex();
-            this.state.phase = 'ROLL';
-            const nextPlayer = this.getCurrentPlayer();
-            this._addLog(`Tới lượt của ${nextPlayer.name}.`, 'system');
-            return this._ok(this._emitEvent('turn_change', {
-                playerId: nextPlayer.id,
-                message: `Lượt của ${nextPlayer.name}`
+            this._addLog(`⏰ HẾT GIỜ! ${win?.name || ''} thắng với tổng tài sản ${formatMoney(win ? this.getNetWorth(win.id) : 0)}.`, 'win');
+            return this._ok(this._emitEvent('game_over', {
+                winnerId: this.state.winnerId,
+                winReason: 'TIME_UP',
+                message: `⏰ Hết giờ — ${win?.name || ''} thắng!`
             }));
         }
     }
