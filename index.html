@@ -9,8 +9,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';document.head.appendChild(s);"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
     <script defer src="js/data.js"></script>
+    <script defer src="js/firebase-config.js"></script>
     <script defer src="js/art.js"></script>
     <script defer src="js/sound.js"></script>
     <script defer src="js/engine.js"></script>
@@ -26,7 +28,7 @@
             <header class="lobby-header">
                 <div class="brand-badge">🎲 BUSINESS TOUR EDITION • 32 Ô CHUẨN 3D ISOMETRIC</div>
                 <h1>CỜ TỶ PHÚ <span>BUSINESS TOUR</span></h1>
-                <p>Xây nhà, mua lại thành phố, tranh cúp World Championships, bay World Tour &amp; săn 4 Bãi Biển — chơi cùng Bot AI hoặc tạo phòng Online P2P.</p>
+                <p>Xây nhà, mua lại thành phố, tranh cúp World Championships, bay World Tour &amp; săn 4 Bãi Biển — chơi cùng Bot AI hoặc Online 4G/Wi-Fi qua Firebase HTTPS.</p>
                 <div class="lobby-top-actions">
                     <button type="button" id="btn-lobby-rules" class="btn btn-ghost btn-sm">📖 Luật chơi</button>
                     <button type="button" id="btn-lobby-sound" class="btn btn-ghost btn-sm">🔊 Âm thanh: Bật</button>
@@ -39,7 +41,7 @@
                         🖥️ Chơi trên máy / Đấu Bot
                     </button>
                     <button type="button" class="mode-tab" data-mode="online" role="tab" aria-selected="false">
-                        🌐 Chơi Online (Mã phòng P2P)
+                        🌐 Chơi Online (4G / Wi-Fi Realtime)
                     </button>
                 </div>
 
@@ -179,6 +181,7 @@
         <div class="top-status-bar">
             <div id="turn-badge" class="turn-badge">Lượt #1</div>
             <span id="online-room-chip" class="room-chip hidden"></span>
+            <span id="conn-status-pill" class="conn-pill hidden">🟢 Online</span>
         </div>
 
         <!-- WORLD TOUR FLIGHT BANNER -->

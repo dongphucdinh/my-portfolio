@@ -479,7 +479,8 @@
                 const badges = [];
                 if (isLocal) badges.push('BẠN');
                 else if (p.isBot) badges.push('BOT');
-                if (p.inIsland) badges.push('ĐẢO');
+                if (ctx.mode !== 'local' && !p.isBot && p.connected === false && !p.bankrupt) badges.push('MẤT MẠNG');
+                else if (p.inIsland) badges.push('ĐẢO');
 
                 container.innerHTML = `
                     <div class="hud-card-box">
@@ -521,11 +522,15 @@
 
         _renderUtilityBar(ctx) {
             const chip = document.getElementById('online-room-chip');
+            const connPill = document.getElementById('conn-status-pill');
             const chatPanel = document.getElementById('chat-panel');
             const isOnline = ctx.mode === 'online-host' || ctx.mode === 'online-client';
             if (chip) {
                 chip.classList.toggle('hidden', !isOnline || !ctx.roomCode);
                 if (ctx.roomCode) chip.textContent = `🌐 Phòng: ${ctx.roomCode}`;
+            }
+            if (connPill) {
+                connPill.classList.toggle('hidden', !isOnline);
             }
             if (chatPanel) chatPanel.classList.toggle('hidden', !isOnline);
         }

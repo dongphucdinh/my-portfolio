@@ -18,6 +18,7 @@
         const appState = {
             mode: 'local', // 'local' | 'online-host' | 'online-client'
             botTimer: null,
+            disconnectBotTimer: null,
             matchTimer: null,
             localSlots: [
                 { name: 'Bạn', avatar: AVATARS[0], isBot: false },
@@ -39,28 +40,67 @@
                 showOnlineBanner(msg, true);
                 ui.showToast(msg, true);
             },
+            onConnectionState: (isOnline) => {
+                const pill = document.getElementById('conn-status-pill');
+                if (!pill) return;
+                pill.textContent = isOnline ? '🟢 Online' : '🟡 Đang nối lại...';
+                pill.classList.toggle('reconnecting', !isOnline);
+            },
             onLobbyUpdate: (lobby) => renderOnlineLobby(lobby),
             onGameState: (snapshot) => {
+                if (network.roomCode) {
+                    appState.mode = network.role === 'host' ? 'online-host' : 'online-client';
+                }
+                const wasHidden = document.getElementById('screen-game').classList.contains('hidden');
                 engine.importState(snapshot);
-                enterGameArena();
+                if (wasHidden) {
+                    ui.resetVisualTracking(engine.getState());
+                    enterGameArena();
+                    if (appState.mode === 'online-host') {
+                        startMatchTimerLoop();
+                        scheduleBotTurnIfNeeded();
+                    }
+                }
                 renderGame();
             },
             onHostAction: (peerPlayerId, action) => handleHostReceivedAction(peerPlayerId, action),
-            onPeerDroppedInGame: (slotId, slotName) => {
+            onRoleChanged: (newRole) => {
+                if (newRole === 'host') {
+                    appState.mode = 'online-host';
+                    ui.showToast('👑 Bạn đã trở thành Chủ phòng mới!');
+                    if (engine.getState()) {
+                        engine._addLog('👑 Chủ phòng mới đã tiếp quản điều phối trận đấu.', 'system');
+                        network.broadcastGameState(engine.exportState());
+                        renderGame();
+                        startMatchTimerLoop();
+                        scheduleBotTurnIfNeeded();
+                    }
+                }
+            },
+            onSlotConnectionChange: (slotId, isConnected, slotName) => {
                 if (!engine.getState()) return;
                 const p = engine.getPlayer(slotId);
-                if (p) {
-                    p.connected = false;
-                    p.isBot = true;
-                    engine._addLog(`${slotName} đã mất kết nối — Bot AI tự động tiếp quản!`, 'system');
+                if (!p) return;
+                p.connected = isConnected;
+                if (isConnected) {
+                    clearTimeout(appState.disconnectBotTimer);
+                    appState.disconnectBotTimer = null;
+                }
+                if (appState.mode === 'online-host') {
+                    engine._addLog(
+                        isConnected
+                            ? `🔄 ${slotName} đã kết nối lại vào trận!`
+                            : `📡 ${slotName} tạm mất kết nối (chờ 12s để kết nối lại)...`,
+                        'system'
+                    );
                     network.broadcastGameState(engine.exportState());
-                    renderGame();
                     scheduleBotTurnIfNeeded();
                 }
+                renderGame();
             },
             onHostDisconnected: () => {
                 if (!document.getElementById('screen-game').classList.contains('hidden')) {
-                    ui.showToast('Chủ phòng đã thoát!', true);
+                    ui.showToast('Phòng đã đóng!', true);
                     exitToLobby();
                 } else {
                     renderOnlineLobby(null);
@@ -353,7 +393,7 @@
         });
 
         function leaveOnlineLobby() {
-            network.disconnect();
+            network.disconnect(true);
             appState.mode = 'local';
             showOnlineBanner('');
             renderOnlineLobby(null);
@@ -374,10 +414,12 @@
 
         function exitToLobby() {
             clearTimeout(appState.botTimer);
+            clearTimeout(appState.disconnectBotTimer);
             clearInterval(appState.matchTimer);
             appState.botTimer = null;
+            appState.disconnectBotTimer = null;
             appState.matchTimer = null;
-            network.disconnect();
+            network.disconnect(true);
             appState.mode = 'local';
             ui.resetVisualTracking(null);
             showOnlineBanner('');
@@ -517,24 +559,39 @@
 
         function scheduleBotTurnIfNeeded() {
             clearTimeout(appState.botTimer);
+            clearTimeout(appState.disconnectBotTimer);
             appState.botTimer = null;
+            appState.disconnectBotTimer = null;
             if (appState.mode === 'online-client') return;
             const state = engine.getState();
             if (!state || state.phase === 'GAME_OVER') return;
 
             const actorId = getRequiredActorId(state);
             const actor = engine.getPlayer(actorId);
-            if (!actor || actor.bankrupt || !actor.isBot) return;
+            if (!actor || actor.bankrupt) return;
 
-            const delay = state.phase === 'SELL_DEBT' ? 500 : 800;
-            appState.botTimer = setTimeout(() => {
-                const curState = engine.getState();
-                if (!curState || curState.phase === 'GAME_OVER') return;
-                const action = chooseAction(engine, actor.id);
-                if (action) {
-                    executeEngineAction(actor.id, action);
-                }
-            }, delay);
+            if (actor.isBot) {
+                const delay = state.phase === 'SELL_DEBT' ? 500 : 800;
+                appState.botTimer = setTimeout(() => {
+                    const curState = engine.getState();
+                    if (!curState || curState.phase === 'GAME_OVER') return;
+                    const action = chooseAction(engine, actor.id);
+                    if (action) {
+                        executeEngineAction(actor.id, action);
+                    }
+                }, delay);
+            } else if (appState.mode === 'online-host' && actor.connected === false) {
+                appState.disconnectBotTimer = setTimeout(() => {
+                    const curState = engine.getState();
+                    const curActor = engine.getPlayer(actor.id);
+                    if (!curState || curState.phase === 'GAME_OVER' || !curActor || curActor.connected !== false) return;
+                    const action = chooseAction(engine, actor.id);
+                    if (action) {
+                        engine._addLog(`🤖 Bot đi hộ ${curActor.name} vì mất kết nối quá 12s.`, 'system');
+                        executeEngineAction(actor.id, action);
+                    }
+                }, 12000);
+            }
         }
 
         // --- TOOLBAR & CHAT LISTENERS ---
@@ -581,20 +638,46 @@
             document.getElementById('left-feed-dock')?.classList.toggle('collapsed');
         });
 
-        // Check ?room=CODE in URL
-        const params = new URLSearchParams(window.location.search);
-        const roomParam = params.get('room');
-        if (roomParam) {
-            const clean = roomParam.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-            if (clean) {
-                document.querySelector('.mode-tab[data-mode="online"]')?.click();
-                const joinInput = document.getElementById('join-room-code');
-                if (joinInput) joinInput.value = clean;
-            }
-        }
-
         updateSoundLabels();
         renderLocalSlots();
         renderOnlineAvatarPicker();
+
+        // Check ?room=CODE in URL & Auto-rejoin previous session on F5
+        const params = new URLSearchParams(window.location.search);
+        const roomParam = params.get('room');
+        const cleanRoomParam = roomParam
+            ? roomParam.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+            : '';
+
+        let savedSessionCode = null;
+        try {
+            const rawSess = localStorage.getItem('cotyphu_session');
+            if (rawSess) savedSessionCode = JSON.parse(rawSess)?.roomCode || null;
+        } catch (_) {}
+
+        if (cleanRoomParam && cleanRoomParam !== savedSessionCode) {
+            document.querySelector('.mode-tab[data-mode="online"]')?.click();
+            const joinInput = document.getElementById('join-room-code');
+            if (joinInput) joinInput.value = cleanRoomParam;
+        } else {
+            network.tryAutoRejoin().then(res => {
+                if (!res || !res.rejoined) return;
+                appState.mode = network.role === 'host' ? 'online-host' : 'online-client';
+                document.querySelector('.mode-tab[data-mode="online"]')?.click();
+                if (!res.started) {
+                    renderOnlineLobby(network.lobby);
+                    ui.showToast(`🔄 Đã tự động kết nối lại phòng ${res.roomCode}!`);
+                } else {
+                    if (engine.getState()) {
+                        renderGame();
+                        if (appState.mode === 'online-host') {
+                            startMatchTimerLoop();
+                            scheduleBotTurnIfNeeded();
+                        }
+                    }
+                    ui.showToast(`🔄 Đã tự động vào lại trận ${res.roomCode}!`);
+                }
+            });
+        }
     });
 })(window);
