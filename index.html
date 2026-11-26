@@ -2,114 +2,265 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Portfolio cá nhân - giới thiệu, kỹ năng và dự án.">
-    <title>SIUUUUUUUUUUUUUU!!</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cờ Tỷ Phú Việt Nam — Chơi Online &amp; Đấu Bot AI</title>
+    <meta name="description" content="Game Cờ Tỷ Phú Việt Nam chuẩn 40 ô: chơi cùng bạn bè trên máy, đấu Bot AI thông minh hoặc chơi Online P2P qua mã phòng.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';document.head.appendChild(s);"></script>
+    <script defer src="js/data.js"></script>
+    <script defer src="js/sound.js"></script>
+    <script defer src="js/engine.js"></script>
+    <script defer src="js/ai.js"></script>
+    <script defer src="js/network.js"></script>
+    <script defer src="js/ui.js"></script>
+    <script defer src="js/main.js"></script>
 </head>
 <body>
-    <header class="header">
-        <a class="logo" href="#top">DongPhucDinh<span></span></a>
-        <nav class="nav" id="nav">
-            <a href="#about">Giới thiệu</a>
-            <a href="#skills">Kỹ năng</a>
-            <a href="#projects">Thành tựu</a>
-            <a href="#contact">Liên hệ</a>
+    <!-- LOBBY / SETUP SCREEN -->
+    <section id="screen-lobby" class="screen-lobby">
+        <div class="lobby-shell">
+            <header class="lobby-header">
+                <div class="brand-badge">🎲 PHỎNG THEO BÀN CỜ TRUYỀN THỐNG 40 Ô</div>
+                <h1>CỜ TỶ PHÚ <span>VIỆT NAM</span></h1>
+                <p>Chinh phục các thành phố khắp ba miền — chơi cùng máy với Bot AI hoặc tạo phòng Online P2P mời bạn bè bằng mã phòng.</p>
+                <div class="lobby-top-actions">
+                    <button type="button" id="btn-lobby-rules" class="btn btn-ghost btn-sm">📖 Luật chơi</button>
+                    <button type="button" id="btn-lobby-sound" class="btn btn-ghost btn-sm">🔊 Âm thanh: Bật</button>
+                </div>
+            </header>
+
+            <div class="lobby-card">
+                <div class="mode-tabs" role="tablist">
+                    <button type="button" class="mode-tab active" data-mode="local" role="tab" aria-selected="true">
+                        🖥️ Chơi trên máy / Đấu Bot
+                    </button>
+                    <button type="button" class="mode-tab" data-mode="online" role="tab" aria-selected="false">
+                        🌐 Chơi Online (Mã phòng P2P)
+                    </button>
+                </div>
+
+                <!-- LOCAL MODE PANEL -->
+                <div id="panel-local" class="mode-panel active">
+                    <div class="panel-head-row">
+                        <div>
+                            <h2>Thiết lập người chơi (2–4 người)</h2>
+                            <p class="muted-text">Chọn tên, nhân vật và bật/tắt Bot AI cho từng vị trí.</p>
+                        </div>
+                        <div class="preset-row">
+                            <button type="button" class="btn btn-ghost btn-xs" data-preset="1v3">1 Người + 3 Bot</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-preset="2p">2 Người</button>
+                            <button type="button" id="btn-add-local-player" class="btn btn-secondary btn-xs">+ Thêm người</button>
+                        </div>
+                    </div>
+
+                    <div id="local-players-editor" class="players-editor"></div>
+
+                    <div class="rules-bar">
+                        <label class="field-inline">
+                            <span>Tiền khởi đầu:</span>
+                            <select id="local-starting-cash">
+                                <option value="1500" selected>1.500k (Chuẩn)</option>
+                                <option value="2000">2.000k (Thoải mái)</option>
+                                <option value="2500">2.500k (Tỷ phú nhanh)</option>
+                            </select>
+                        </label>
+                        <label class="checkbox-inline">
+                            <input type="checkbox" id="local-free-parking">
+                            <span>Quỹ Đỗ Xe Miễn Phí (gộp tiền thuế &amp; phạt)</span>
+                        </label>
+                    </div>
+
+                    <button type="button" id="btn-start-local" class="btn btn-primary btn-lg btn-block">
+                        🚀 Bắt đầu ván mới
+                    </button>
+                </div>
+
+                <!-- ONLINE MODE PANEL -->
+                <div id="panel-online" class="mode-panel">
+                    <div id="online-status-banner" class="status-banner hidden"></div>
+
+                    <div id="online-entry-view">
+                        <div class="online-profile-box">
+                            <label class="field-stack">
+                                <span>Tên hiển thị của bạn</span>
+                                <input type="text" id="online-name" maxlength="18" placeholder="VD: Tỷ Phú Đông" value="Người chơi">
+                            </label>
+                            <div class="field-stack">
+                                <span>Chọn biểu tượng</span>
+                                <div id="online-avatar-picker" class="avatar-picker"></div>
+                            </div>
+                        </div>
+
+                        <div class="online-split">
+                            <div class="online-box">
+                                <h3>🏠 Tạo phòng mới</h3>
+                                <p class="muted-text">Bạn làm chủ phòng, có thể mời bạn bè qua mã 6 ký tự và thêm Bot AI nếu thiếu người.</p>
+                                <label class="field-inline">
+                                    <span>Tiền khởi đầu:</span>
+                                    <select id="online-starting-cash">
+                                        <option value="1500" selected>1.500k (Chuẩn)</option>
+                                        <option value="2000">2.000k</option>
+                                        <option value="2500">2.500k</option>
+                                    </select>
+                                </label>
+                                <label class="checkbox-inline">
+                                    <input type="checkbox" id="online-free-parking">
+                                    <span>Bật Quỹ Đỗ Xe Miễn Phí</span>
+                                </label>
+                                <button type="button" id="btn-create-room" class="btn btn-primary btn-block">
+                                    ✨ Tạo phòng Online
+                                </button>
+                            </div>
+
+                            <div class="online-box">
+                                <h3>🔑 Vào phòng có sẵn</h3>
+                                <p class="muted-text">Nhập mã 6 ký tự từ bạn bè hoặc mở trực tiếp link mời.</p>
+                                <label class="field-stack">
+                                    <span>Mã phòng</span>
+                                    <input type="text" id="join-room-code" maxlength="6" placeholder="VD: AB12CD" autocomplete="off">
+                                </label>
+                                <button type="button" id="btn-join-room" class="btn btn-accent btn-block">
+                                    🚪 Tham gia phòng
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="online-room-panel" class="hidden">
+                        <div class="room-code-hero">
+                            <div>
+                                <span class="muted-text">MÃ PHÒNG CỦA BẠN</span>
+                                <div id="room-code-display" class="room-code-text">------</div>
+                            </div>
+                            <div class="room-share-btns">
+                                <button type="button" id="btn-copy-code" class="btn btn-secondary btn-sm">📋 Copy mã</button>
+                                <button type="button" id="btn-copy-link" class="btn btn-ghost btn-sm">🔗 Copy link mời</button>
+                            </div>
+                        </div>
+
+                        <div class="panel-head-row">
+                            <h3>Danh sách trong phòng (<span id="online-slot-count">1</span>/4)</h3>
+                            <button type="button" id="btn-online-add-bot" class="btn btn-secondary btn-xs hidden">+ Thêm Bot AI</button>
+                        </div>
+
+                        <div id="online-slots-list" class="online-slots-list"></div>
+
+                        <div id="online-host-controls" class="online-footer-actions hidden">
+                            <button type="button" id="btn-start-online" class="btn btn-primary btn-lg">🚀 Bắt đầu ván đấu</button>
+                            <button type="button" id="btn-leave-room" class="btn btn-danger btn-sm">Thoát phòng</button>
+                        </div>
+                        <div id="online-client-controls" class="online-footer-actions hidden">
+                            <span class="waiting-pill">⏳ Đang chờ chủ phòng bắt đầu...</span>
+                            <button type="button" id="btn-leave-room-client" class="btn btn-danger btn-sm">Rời phòng</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- GAME ARENA SCREEN -->
+    <section id="screen-game" class="screen-game hidden">
+        <nav class="mobile-tabs" aria-label="Chuyển đổi góc nhìn">
+            <button type="button" class="mobile-tab active" data-mtab="board">🗺️ Bàn cờ</button>
+            <button type="button" class="mobile-tab" data-mtab="players">👥 Người chơi</button>
+            <button type="button" class="mobile-tab" data-mtab="log">📜 Nhật ký</button>
         </nav>
-        <a class="button small header-cta" href="#contact">Hợp tác cùng tôi</a>
-        <button class="menu" id="menu" aria-label="Mở menu" aria-expanded="false">☰</button>
-    </header>
 
-    <main id="top">
-        <section class="hero">
-            <div class="eyebrow"><span class="pulse"></span> XIN CHÀO, RẤT VUI ĐƯỢC GẶP BẠN</div>
-            <h1><em>I'M BACK</em></h1>
-            <p>Tôi là một người yêu thích Cristiano Ronaldo. Tôi tạo ra trang web này để tri ân anh 7.</p>
-            <div class="hero-actions">
-                <a class="button" href="#projects">Thành tựu của A7</a>
-                <a class="text-link" href="#about">Tìm hiểu về A7</a>
-            </div>
-            <div class="gallery-strip" aria-label="Cảm hứng sáng tạo">
-                <div class="gallery-track">
-                    <div class="tile tall"><img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEoje6Uw6oP_Y-QlX1psYDjZQlOvWTeRfRnrlkiibTRQ&s=10" alt="Không gian làm việc"><span></span></div>
-                    <div class="tile short"><img src="https://photo.znews.vn/w960/Uploaded/mfnuy/2024_04_09/al_hilal_2_1_al_nassr_5.jpg" alt="Thiết kế đồ họa"><span></span></div>
-                    <div class="tile tall"><img src="https://cdn.daidoanket.vn/w1200/uploaded/images/2025/09/09/39eea40b-87c8-4955-b385-3089d4d99a7d.jpg" alt="Lập trình"><span></span></div>
-                    <div class="tile short"><img src="https://vcdn1-thethao.vnecdn.net/2023/04/19/ronaldo-1681853852-7212-1681854190.png?w=1020&h=0&q=100&dpr=2&fit=crop&s=dTgNb5tBmf6Ns8vXKiON2w" alt="Máy tính làm việc"><span></span></div>
-                    <div class="tile tall"><img src="image/1.jpg" alt="Thiết kế sáng tạo"><span></span></div>
+        <div class="arena-layout">
+            <!-- BOARD AREA -->
+            <main class="board-column active-mobile-pane" data-mpane="board">
+                <div class="board-wrapper">
+                    <div id="board" class="board">
+                        <!-- 40 tiles injected by ui.js -->
+                        <div id="board-center" class="board-center">
+                            <div class="center-top-bar">
+                                <div class="center-logo">CỜ TỶ PHÚ <span>VN</span></div>
+                                <div id="turn-badge" class="turn-badge">Lượt #1</div>
+                            </div>
+
+                            <div id="free-parking-pill" class="pot-pill hidden">
+                                🅿️ Quỹ Đỗ Xe: <strong id="pot-amount">0k</strong>
+                            </div>
+
+                            <div class="center-decks">
+                                <div class="deck-card deck-chance">
+                                    <span>❓</span>
+                                    <strong>CƠ HỘI</strong>
+                                </div>
+                                <div class="dice-stage">
+                                    <div id="dice-1" class="die" data-val="1"></div>
+                                    <div id="dice-2" class="die" data-val="1"></div>
+                                </div>
+                                <div class="deck-card deck-chest">
+                                    <span>🎁</span>
+                                    <strong>KHÍ VẬN</strong>
+                                </div>
+                            </div>
+
+                            <div id="center-actions" class="center-actions"></div>
+                            <div id="event-ticker" class="event-ticker">Sẵn sàng tung xúc xắc!</div>
+                            <div id="float-fx-layer" class="float-fx-layer" aria-hidden="true"></div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div class="marquee"><div>THỂ THAO LÀ KHÔNG NGỪNG BỎ CUỘC , FACTOS SIUUUU</div></div>
-        </section>
+            </main>
 
-        <section class="section about" id="about">
-            <div class="section-label">01 / VỀ A7</div>
-            <div class="about-grid">
-                <div class="about-photo"><img src="image/2.jpg" alt="Góc làm việc của tôi"></div>
-                <div class="about-copy">
-                    <h2>Xin chào!<br><em>CRISTIANO RONALDO</em> là ai?</h2>
-                    <p>Cristiano Ronaldo dos Santos Aveiro, thường được gọi là Cristiano Ronaldo (CR7), Ri Đỗ, BOAT(Bluetooth Of All Time), YOAT(Youtube Of All Time), Kim RiCha (Người hùng hàn quốc), Võ sư hy lạp, v.v là cầu thủ bóng đá nổi tiếng người Bồ Đào Nha. Anh sinh ngày 5/2/1985 tại Funchal, Madeira, Bồ Đào Nha.</p>
-                    <p>Ronaldo từng thi đấu cho các câu lạc bộ lớn như Sporting CP, Manchester United, Real Madrid và Juventus. Anh hiện thi đấu cho Al Nassr tại Saudi Arabia và đội tuyển quốc gia Bồ Đào Nha.</p>
-                    <a class="underline-link" href="#contact">Kết nối với tôi nếu bạn cũng là 1 fan của A7</a>
+            <!-- SIDE PANEL -->
+            <aside class="side-panel">
+                <div class="utility-bar">
+                    <div class="utility-left">
+                        <span id="online-room-chip" class="room-chip hidden"></span>
+                    </div>
+                    <div class="utility-right">
+                        <button type="button" id="btn-sound" class="btn btn-ghost btn-xs" title="Bật/Tắt âm thanh">🔊</button>
+                        <button type="button" id="btn-rules" class="btn btn-ghost btn-xs">📖 Luật</button>
+                        <button type="button" id="btn-exit-game" class="btn btn-danger btn-xs">Thoát</button>
+                    </div>
                 </div>
-            </div>
-        </section>
 
-        <section class="section skills" id="skills">
-            <div class="section-label">02 / Không Có Gì Để Nói</div>
-            <div class="section-heading"><h2>Kỹ năng &amp;<br><em>thế mạnh.</em></h2><p>Những skills làm nên tên tuổi của Anh 7</p></div>
-            <div class="project-grid">
-                <article class="project-card"><div class="project-image"><img src="image/diving.jpg" alt="Dự án website cá nhân"><span>Diving</span></div><div class="project-meta"><h3>Dịch Cabin: Vấp cỏ</h3><span></span></div></article>
-                <article class="project-card"><div class="project-image"><img src="image/stepover.jpg" alt="Dự án quản lý dữ liệu"><span>Step Over</span></div><div class="project-meta"><h3>Dịch Cabin: Đảo xong chuyền về</h3><span></span></div></article>
-                <article class="project-card"><div class="project-image"><img src="image/freek.jpg" alt="Dự án giao diện sáng tạo"><span>Free kick</span></div><div class="project-meta"><h3>Thôi tự xem</h3><span></span></div></article>
-            </div>
-        </section>
+                <div class="side-pane players-pane" data-mpane="players">
+                    <div class="section-title-row">
+                        <h3>Người chơi</h3>
+                        <div class="manage-quick-btns">
+                            <button type="button" id="btn-open-manage" class="btn btn-secondary btn-xs">🏘️ Quản lý Đất</button>
+                            <button type="button" id="btn-open-trade" class="btn btn-accent btn-xs">🤝 Giao dịch</button>
+                        </div>
+                    </div>
+                    <div id="players-list" class="players-list"></div>
+                </div>
 
-        <section class="section projects" id="projects">
-            <div class="section-label">03 / THÀNH TỰU TIÊU BIỂU</div>
-            <div class="section-heading"><h2>Một vài thứ<br><em>anh 7 đã tạo ra.</em></h2><p></p></div>
-            <div class="project-grid">
-                <article class="project-card"><div class="project-image"><img src="image/4.jpg" alt="Dự án website cá nhân"><span></span></div><div class="project-meta"><h3>5 Ballon d'Or 4 European Golden Shoe, không có gì để bàn cãi , siuuuu</h3><span></span></div></article>
-                <article class="project-card"><div class="project-image"><img src="image/8.jpg" alt="Dự án quản lý dữ liệu"><span></span></div><div class="project-meta"><h3>YOAT - Youtuber nhanh nhất đạt được 1 triệu người theo dõi.</h3><span></span></div></article>
-                <article class="project-card"><div class="project-image"><img src="image/7.jpg" alt="Dự án giao diện sáng tạo"><span></span></div><div class="project-meta"><h3>Kỷ lục vĩ đại 3/5</h3><span></span></div></article>
-            </div>
-        </section>
+                <div class="side-pane log-pane" data-mpane="log">
+                    <div id="chat-panel" class="chat-panel hidden">
+                        <div class="chat-head">💬 Chat phòng Online</div>
+                        <div id="chat-messages" class="chat-messages"></div>
+                        <div class="emoji-strip">
+                            <button type="button" class="emoji-btn" data-emoji="👍">👍</button>
+                            <button type="button" class="emoji-btn" data-emoji="😂">😂</button>
+                            <button type="button" class="emoji-btn" data-emoji="😱">😱</button>
+                            <button type="button" class="emoji-btn" data-emoji="💸">💸</button>
+                            <button type="button" class="emoji-btn" data-emoji="🔥">🔥</button>
+                        </div>
+                        <form id="chat-form" class="chat-form">
+                            <input type="text" id="chat-input" maxlength="160" placeholder="Nhắn tin...">
+                            <button type="submit" class="btn btn-primary btn-xs">Gửi</button>
+                        </form>
+                    </div>
 
-        <section class="section philosophy">
-            <div class="section-label">04 / QUAN ĐIỂM CỦA TÔI</div>
-            <div class="philosophy-layout"><div><h2>Thể thao là<br><em>KHÔNG NGỪNG </em>bỏ cuộc</h2><p>Tôi tin rằng việc lập trình cũng giống như chơi thể thao vậy, thể thao là không ngừng bỏ cuộc.</p><a class="button light" href="#contact">Cùng trao đổi</a></div><div class="philosophy-image"><img src="https://cdn.bongdaplus.vn/Assets/Media/2025/01/11/56/tien-linh-3.jpg" alt="Không gian sáng tạo"></div></div>
-        </section>
+                    <div class="log-head">📜 Nhật ký ván đấu</div>
+                    <div id="game-log" class="game-log"></div>
+                </div>
+            </aside>
+        </div>
+    </section>
 
-        <section class="section contact" id="contact">
-            <div class="section-label">05 / LIÊN HỆ</div>
-            <h2><em>Hãy trò chuyện</em></h2>
-            <p>Tôi luôn sẵn sàng lắng nghe nhưng lâu lâu mới phản hồi</p>
-            <a class="button light" href="mailto:gnodnorthside@gmail.com?subject=Hello">Gửi email cho tôi</a>
-            <div class="social-links">
-                <a href="https://github.com/dongphucdinh"
-                target="_blank"
-                rel="noopener noreferrer">
-                    <i class="fa-brands fa-github"></i>
-                    GitHub
-                </a>
+    <!-- MODAL ROOT -->
+    <div id="modal-root" class="modal-backdrop hidden" role="dialog" aria-modal="true"></div>
 
-                <a href="https://www.instagram.com/djnhphucdong/"
-                target="_blank"
-                rel="noopener noreferrer">
-                    <i class="fa-brands fa-instagram"></i>
-                    Instagram
-                </a>
-
-                <a href="https://www.facebook.com/dongkjemem/"
-                target="_blank"
-                rel="noopener noreferrer">
-                    <i class="fa-brands fa-facebook"></i>
-                    Facebook
-                </a>
-            </div>
-    </main>
-
-    <footer><a class="logo" href="#top"><span></span></a><span>©2026 Dinh Phuc Dong</span><a href="#top">Về đầu trang ↑</a></footer>
-    <script src="script.js"></script>
+    <!-- TOAST LAYER -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 </body>
 </html>
